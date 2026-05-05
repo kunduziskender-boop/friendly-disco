@@ -1,0 +1,13 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Плавная прокрутка по всему сайту */
+* {
+  scroll-behavior: smooth;
+}
+
+/* Скрываем скроллбар в горизонтальных контейнерах, но оставляем функциональность */
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
