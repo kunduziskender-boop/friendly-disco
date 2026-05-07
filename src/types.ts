@@ -32,3 +32,19 @@ export type CrmState = {
   cases: LegalCase[];
   appointments: Appointment[];
 };
+
+export type FinanceType = "payment" | "expense" | "refund";
+export type FinanceStatus = "pending" | "paid" | "cancelled";
+
+export type FinanceRecord = {
+  id: string;
+  recordType: FinanceType;
+  amount: number;
+  currency: string;
+  paymentDate: string;
+  status: FinanceStatus;
+  clientId: string | null;
+  caseId: string | null;
+  description: string | null;
+  createdAt: string;
+};
