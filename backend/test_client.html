@@ -1,0 +1,796 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Lawyer CRM — API Tester</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    background: #0f1117;
+    color: #e2e8f0;
+    display: flex;
+    height: 100vh;
+    overflow: hidden;
+  }
+
+  /* ── Sidebar ── */
+  #sidebar {
+    width: 220px;
+    flex-shrink: 0;
+    background: #1a1d27;
+    border-right: 1px solid #2d3148;
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+  }
+  #sidebar h2 {
+    padding: 18px 16px 12px;
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    color: #7c83a8;
+    border-bottom: 1px solid #2d3148;
+  }
+  .nav-item {
+    padding: 10px 16px;
+    cursor: pointer;
+    font-size: 14px;
+    color: #a0aec0;
+    border-left: 3px solid transparent;
+    transition: all .15s;
+  }
+  .nav-item:hover { background: #22263a; color: #e2e8f0; }
+  .nav-item.active { background: #1e2338; border-left-color: #6366f1; color: #fff; }
+
+  /* ── Main ── */
+  #main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  /* ── Token bar ── */
+  #tokenbar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 16px;
+    background: #1a1d27;
+    border-bottom: 1px solid #2d3148;
+  }
+  #tokenbar span { font-size: 12px; color: #7c83a8; white-space: nowrap; }
+  #tokenDisplay {
+    flex: 1;
+    font-size: 11px;
+    font-family: monospace;
+    background: #0f1117;
+    border: 1px solid #2d3148;
+    border-radius: 6px;
+    padding: 5px 10px;
+    color: #68d391;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  #clearToken {
+    background: #3d1515;
+    color: #fc8181;
+    border: 1px solid #7f1d1d;
+    border-radius: 6px;
+    padding: 4px 10px;
+    font-size: 12px;
+    cursor: pointer;
+  }
+  #clearToken:hover { background: #7f1d1d; }
+
+  /* ── Content ── */
+  #content {
+    flex: 1;
+    display: flex;
+    overflow: hidden;
+  }
+
+  /* ── Panels ── */
+  #leftPanel {
+    width: 420px;
+    flex-shrink: 0;
+    overflow-y: auto;
+    padding: 16px;
+    border-right: 1px solid #2d3148;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .section { display: none; flex-direction: column; gap: 12px; }
+  .section.visible { display: flex; }
+
+  .section h3 {
+    font-size: 16px;
+    font-weight: 600;
+    color: #a5b4fc;
+    padding-bottom: 6px;
+    border-bottom: 1px solid #2d3148;
+  }
+
+  .card {
+    background: #1a1d27;
+    border: 1px solid #2d3148;
+    border-radius: 10px;
+    padding: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .card label {
+    font-size: 12px;
+    color: #7c83a8;
+    font-weight: 500;
+    margin-bottom: 2px;
+    display: block;
+  }
+
+  input, select, textarea {
+    width: 100%;
+    background: #0f1117;
+    border: 1px solid #2d3148;
+    border-radius: 6px;
+    padding: 7px 10px;
+    color: #e2e8f0;
+    font-size: 13px;
+    font-family: inherit;
+    outline: none;
+    transition: border-color .15s;
+  }
+  input:focus, select:focus, textarea:focus { border-color: #6366f1; }
+  textarea { resize: vertical; min-height: 80px; font-family: monospace; }
+
+  .btn-row { display: flex; gap: 8px; flex-wrap: wrap; }
+
+  button {
+    border: none;
+    border-radius: 7px;
+    padding: 7px 14px;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: opacity .15s, transform .1s;
+  }
+  button:hover { opacity: .85; }
+  button:active { transform: scale(.97); }
+
+  .btn-primary   { background: #6366f1; color: #fff; }
+  .btn-green     { background: #22543d; color: #68d391; border: 1px solid #276749; }
+  .btn-yellow    { background: #744210; color: #f6e05e; border: 1px solid #975a16; }
+  .btn-red       { background: #742a2a; color: #fc8181; border: 1px solid #9b2c2c; }
+  .btn-blue      { background: #2a4365; color: #90cdf4; border: 1px solid #2c5282; }
+
+  /* ── Result panel ── */
+  #rightPanel {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  #resultHeader {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 16px;
+    border-bottom: 1px solid #2d3148;
+    font-size: 13px;
+    color: #7c83a8;
+  }
+  #resultStatus { font-size: 13px; font-weight: 600; }
+  .status-ok  { color: #68d391; }
+  .status-err { color: #fc8181; }
+  #clearResult {
+    background: none;
+    border: 1px solid #2d3148;
+    color: #7c83a8;
+    border-radius: 6px;
+    padding: 3px 10px;
+    font-size: 12px;
+    cursor: pointer;
+  }
+  #resultBody {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px;
+    font-family: monospace;
+    font-size: 13px;
+    line-height: 1.6;
+    white-space: pre-wrap;
+    word-break: break-all;
+  }
+
+  /* JSON colours */
+  .j-key    { color: #90cdf4; }
+  .j-str    { color: #68d391; }
+  .j-num    { color: #f6ad55; }
+  .j-bool   { color: #a5b4fc; }
+  .j-null   { color: #fc8181; }
+</style>
+</head>
+<body>
+
+<!-- Sidebar -->
+<nav id="sidebar">
+  <h2>Lawyer CRM</h2>
+  <div class="nav-item active" data-section="auth">🔑 Auth</div>
+  <div class="nav-item" data-section="users">👤 Users</div>
+  <div class="nav-item" data-section="clients">🧑‍💼 Clients</div>
+  <div class="nav-item" data-section="cases">📁 Cases</div>
+  <div class="nav-item" data-section="tasks">✅ Tasks</div>
+  <div class="nav-item" data-section="calendar">📅 Calendar</div>
+  <div class="nav-item" data-section="documents">📄 Documents</div>
+  <div class="nav-item" data-section="finance">💰 Finance</div>
+</nav>
+
+<div id="main">
+
+  <!-- Token bar -->
+  <div id="tokenbar">
+    <span>JWT Token:</span>
+    <div id="tokenDisplay">— не установлен —</div>
+    <button id="clearToken" onclick="clearToken()">✕ Сбросить</button>
+  </div>
+
+  <div id="content">
+    <div id="leftPanel">
+
+      <!-- ══ AUTH ══ -->
+      <div class="section visible" id="section-auth">
+        <h3>Auth</h3>
+        <div class="card">
+          <label>POST /auth/login</label>
+          <input id="loginEmail" placeholder="email" value="lawyer@example.com" />
+          <input id="loginPassword" type="password" placeholder="password" value="Lawyer1234" />
+          <div class="btn-row">
+            <button class="btn-primary" onclick="doLogin()">Войти (POST /auth/login)</button>
+          </div>
+        </div>
+        <div class="card">
+          <label>GET /auth/me — текущий пользователь</label>
+          <div class="btn-row">
+            <button class="btn-blue" onclick="get('/auth/me')">GET /auth/me</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ══ USERS ══ -->
+      <div class="section" id="section-users">
+        <h3>Users</h3>
+        <div class="card">
+          <div class="btn-row">
+            <button class="btn-blue" onclick="get('/users')">Получить список</button>
+          </div>
+        </div>
+        <div class="card">
+          <label>GET /users/{id}</label>
+          <input id="getUserId" placeholder="user_1" value="user_1" />
+          <div class="btn-row">
+            <button class="btn-blue" onclick="get('/users/'+v('getUserId'))">Получить по ID</button>
+          </div>
+        </div>
+        <div class="card">
+          <label>POST /users (только admin)</label>
+          <input id="newUserName" placeholder="Полное имя" value="Новый Адвокат" />
+          <input id="newUserEmail" placeholder="email" value="newlawyer@example.com" />
+          <input id="newUserPass" placeholder="пароль" value="Pass1234" />
+          <select id="newUserRole">
+            <option value="lawyer">lawyer</option>
+            <option value="admin">admin</option>
+            <option value="assistant">assistant</option>
+          </select>
+          <div class="btn-row">
+            <button class="btn-green" onclick="createUser()">Создать</button>
+          </div>
+        </div>
+        <div class="card">
+          <label>PATCH /users/{id}</label>
+          <input id="patchUserId" placeholder="user_2" value="user_2" />
+          <input id="patchUserName" placeholder="Новое имя" value="Иван Адвокатов" />
+          <div class="btn-row">
+            <button class="btn-yellow" onclick="patchUser()">Обновить имя</button>
+          </div>
+        </div>
+        <div class="card">
+          <label>DELETE /users/{id} — деактивация (только admin)</label>
+          <input id="deleteUserId" placeholder="user_2" value="user_2" />
+          <div class="btn-row">
+            <button class="btn-red" onclick="del('/users/'+v('deleteUserId'))">Удалить / деактивировать</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ══ CLIENTS ══ -->
+      <div class="section" id="section-clients">
+        <h3>Clients</h3>
+        <div class="card">
+          <div class="btn-row">
+            <button class="btn-blue" onclick="get('/clients')">Получить список</button>
+            <button class="btn-blue" onclick="get('/clients?client_type=individual')">Только individual</button>
+            <button class="btn-blue" onclick="get('/clients?client_type=company')">Только company</button>
+          </div>
+        </div>
+        <div class="card">
+          <label>GET /clients/{id}</label>
+          <input id="getClientId" placeholder="cl_1" value="cl_1" />
+          <div class="btn-row">
+            <button class="btn-blue" onclick="get('/clients/'+v('getClientId'))">Получить по ID</button>
+          </div>
+        </div>
+        <div class="card">
+          <label>POST /clients — создать клиента</label>
+          <input id="clientName"  placeholder="Имя / название" value="Иван Петров" />
+          <input id="clientPhone" placeholder="Телефон" value="+79991234567" />
+          <input id="clientEmail" placeholder="Email" value="ivan@example.com" />
+          <select id="clientType">
+            <option value="individual">individual</option>
+            <option value="company">company</option>
+          </select>
+          <input id="clientNotes" placeholder="Заметки (необязательно)" />
+          <div class="btn-row">
+            <button class="btn-green" onclick="createClient()">Создать</button>
+          </div>
+        </div>
+        <div class="card">
+          <label>PATCH /clients/{id}</label>
+          <input id="patchClientId"    placeholder="cl_1" value="cl_1" />
+          <input id="patchClientNotes" placeholder="Новые заметки" value="VIP клиент" />
+          <div class="btn-row">
+            <button class="btn-yellow" onclick="patchClient()">Обновить заметки</button>
+          </div>
+        </div>
+        <div class="card">
+          <label>DELETE /clients/{id}</label>
+          <input id="deleteClientId" placeholder="cl_1" value="cl_1" />
+          <div class="btn-row">
+            <button class="btn-red" onclick="del('/clients/'+v('deleteClientId'))">Удалить</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ══ CASES ══ -->
+      <div class="section" id="section-cases">
+        <h3>Cases</h3>
+        <div class="card">
+          <div class="btn-row">
+            <button class="btn-blue" onclick="get('/cases')">Получить список</button>
+            <button class="btn-blue" onclick="get('/cases?status=open')">Открытые</button>
+            <button class="btn-blue" onclick="get('/cases?status=closed')">Закрытые</button>
+          </div>
+        </div>
+        <div class="card">
+          <label>GET /cases/{id}</label>
+          <input id="getCaseId" placeholder="cs_1" value="cs_1" />
+          <div class="btn-row">
+            <button class="btn-blue" onclick="get('/cases/'+v('getCaseId'))">Получить по ID</button>
+          </div>
+        </div>
+        <div class="card">
+          <label>POST /cases — создать дело</label>
+          <input id="caseNumber"   placeholder="Номер дела" value="A-2026-001" />
+          <input id="caseTitle"    placeholder="Название" value="Иск о взыскании долга" />
+          <input id="caseClientId" placeholder="client_id" value="cl_1" />
+          <input id="caseDesc"     placeholder="Описание (необязательно)" />
+          <select id="caseStatus">
+            <option value="open">open</option>
+            <option value="in_progress">in_progress</option>
+            <option value="closed">closed</option>
+            <option value="archived">archived</option>
+          </select>
+          <div class="btn-row">
+            <button class="btn-green" onclick="createCase()">Создать</button>
+          </div>
+        </div>
+        <div class="card">
+          <label>PATCH /cases/{id} — изменить статус</label>
+          <input id="patchCaseId" placeholder="cs_1" value="cs_1" />
+          <select id="patchCaseStatus">
+            <option value="open">open</option>
+            <option value="in_progress">in_progress</option>
+            <option value="closed">closed</option>
+            <option value="archived">archived</option>
+          </select>
+          <div class="btn-row">
+            <button class="btn-yellow" onclick="patchCase()">Обновить статус</button>
+          </div>
+        </div>
+        <div class="card">
+          <label>DELETE /cases/{id} (только admin)</label>
+          <input id="deleteCaseId" placeholder="cs_1" value="cs_1" />
+          <div class="btn-row">
+            <button class="btn-red" onclick="del('/cases/'+v('deleteCaseId'))">Удалить</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ══ TASKS ══ -->
+      <div class="section" id="section-tasks">
+        <h3>Tasks</h3>
+        <div class="card">
+          <div class="btn-row">
+            <button class="btn-blue" onclick="get('/tasks')">Получить список</button>
+            <button class="btn-blue" onclick="get('/tasks?status=todo')">Todo</button>
+            <button class="btn-blue" onclick="get('/tasks?status=done')">Done</button>
+          </div>
+        </div>
+        <div class="card">
+          <label>GET /tasks/{id}</label>
+          <input id="getTaskId" placeholder="tsk_1" value="tsk_1" />
+          <div class="btn-row">
+            <button class="btn-blue" onclick="get('/tasks/'+v('getTaskId'))">Получить по ID</button>
+          </div>
+        </div>
+        <div class="card">
+          <label>POST /tasks — создать задачу</label>
+          <input id="taskTitle"   placeholder="Заголовок" value="Подать ходатайство" />
+          <input id="taskDueDate" placeholder="due_date (ISO)" value="2026-12-01T12:00:00" />
+          <input id="taskCaseId"  placeholder="case_id (необязательно)" value="cs_1" />
+          <select id="taskPriority">
+            <option value="medium">medium</option>
+            <option value="high">high</option>
+            <option value="low">low</option>
+          </select>
+          <div class="btn-row">
+            <button class="btn-green" onclick="createTask()">Создать</button>
+          </div>
+        </div>
+        <div class="card">
+          <label>PATCH /tasks/{id} — изменить статус</label>
+          <input id="patchTaskId" placeholder="tsk_1" value="tsk_1" />
+          <select id="patchTaskStatus">
+            <option value="todo">todo</option>
+            <option value="in_progress">in_progress</option>
+            <option value="done">done</option>
+            <option value="overdue">overdue</option>
+          </select>
+          <div class="btn-row">
+            <button class="btn-yellow" onclick="patchTask()">Обновить статус</button>
+          </div>
+        </div>
+        <div class="card">
+          <label>DELETE /tasks/{id}</label>
+          <input id="deleteTaskId" placeholder="tsk_1" value="tsk_1" />
+          <div class="btn-row">
+            <button class="btn-red" onclick="del('/tasks/'+v('deleteTaskId'))">Удалить</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ══ CALENDAR ══ -->
+      <div class="section" id="section-calendar">
+        <h3>Calendar Events</h3>
+        <div class="card">
+          <div class="btn-row">
+            <button class="btn-blue" onclick="get('/calendar-events')">Получить список</button>
+            <button class="btn-blue" onclick="get('/calendar-events?event_type=hearing')">Слушания</button>
+          </div>
+        </div>
+        <div class="card">
+          <label>GET /calendar-events/{id}</label>
+          <input id="getEventId" placeholder="ev_1" value="ev_1" />
+          <div class="btn-row">
+            <button class="btn-blue" onclick="get('/calendar-events/'+v('getEventId'))">Получить по ID</button>
+          </div>
+        </div>
+        <div class="card">
+          <label>POST /calendar-events — создать событие</label>
+          <input id="eventTitle"   placeholder="Название" value="Судебное заседание" />
+          <input id="eventStart"   placeholder="start_at (ISO)" value="2026-12-10T10:00:00" />
+          <input id="eventEnd"     placeholder="end_at (ISO)"   value="2026-12-10T12:00:00" />
+          <select id="eventType">
+            <option value="hearing">hearing</option>
+            <option value="meeting">meeting</option>
+            <option value="deadline">deadline</option>
+            <option value="other">other</option>
+          </select>
+          <input id="eventCaseId" placeholder="case_id (необязательно)" value="cs_1" />
+          <div class="btn-row">
+            <button class="btn-green" onclick="createEvent()">Создать</button>
+          </div>
+        </div>
+        <div class="card">
+          <label>PATCH /calendar-events/{id} — изменить название</label>
+          <input id="patchEventId"    placeholder="ev_1" value="ev_1" />
+          <input id="patchEventTitle" placeholder="Новое название" value="Заседание (перенесено)" />
+          <div class="btn-row">
+            <button class="btn-yellow" onclick="patchEvent()">Обновить</button>
+          </div>
+        </div>
+        <div class="card">
+          <label>DELETE /calendar-events/{id}</label>
+          <input id="deleteEventId" placeholder="ev_1" value="ev_1" />
+          <div class="btn-row">
+            <button class="btn-red" onclick="del('/calendar-events/'+v('deleteEventId'))">Удалить</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ══ DOCUMENTS ══ -->
+      <div class="section" id="section-documents">
+        <h3>Documents</h3>
+        <div class="card">
+          <div class="btn-row">
+            <button class="btn-blue" onclick="get('/documents')">Получить список</button>
+            <button class="btn-blue" onclick="get('/documents?status=draft')">Черновики</button>
+          </div>
+        </div>
+        <div class="card">
+          <label>GET /documents/{id}</label>
+          <input id="getDocId" placeholder="doc_1" value="doc_1" />
+          <div class="btn-row">
+            <button class="btn-blue" onclick="get('/documents/'+v('getDocId'))">Получить по ID</button>
+          </div>
+        </div>
+        <div class="card">
+          <label>POST /documents — добавить документ</label>
+          <input id="docTitle"    placeholder="Название" value="Исковое заявление" />
+          <select id="docType">
+            <option value="claim">claim</option>
+            <option value="contract">contract</option>
+            <option value="evidence">evidence</option>
+            <option value="invoice">invoice</option>
+            <option value="other">other</option>
+          </select>
+          <input id="docCaseId"   placeholder="case_id" value="cs_1" />
+          <input id="docClientId" placeholder="client_id (необязательно)" />
+          <input id="docFileName" placeholder="file_name (необязательно)" value="claim_2026.pdf" />
+          <div class="btn-row">
+            <button class="btn-green" onclick="createDoc()">Создать</button>
+          </div>
+        </div>
+        <div class="card">
+          <label>PATCH /documents/{id} — изменить статус</label>
+          <input id="patchDocId" placeholder="doc_1" value="doc_1" />
+          <select id="patchDocStatus">
+            <option value="draft">draft</option>
+            <option value="final">final</option>
+            <option value="archived">archived</option>
+          </select>
+          <div class="btn-row">
+            <button class="btn-yellow" onclick="patchDoc()">Обновить статус</button>
+          </div>
+        </div>
+        <div class="card">
+          <label>DELETE /documents/{id}</label>
+          <input id="deleteDocId" placeholder="doc_1" value="doc_1" />
+          <div class="btn-row">
+            <button class="btn-red" onclick="del('/documents/'+v('deleteDocId'))">Удалить</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ══ FINANCE ══ -->
+      <div class="section" id="section-finance">
+        <h3>Finance Records</h3>
+        <div class="card">
+          <div class="btn-row">
+            <button class="btn-blue" onclick="get('/finance-records')">Получить список</button>
+            <button class="btn-blue" onclick="get('/finance-records?record_type=payment')">Платежи</button>
+            <button class="btn-blue" onclick="get('/finance-records?status=pending')">Ожидают оплаты</button>
+          </div>
+        </div>
+        <div class="card">
+          <label>GET /finance-records/{id}</label>
+          <input id="getFinId" placeholder="fin_1" value="fin_1" />
+          <div class="btn-row">
+            <button class="btn-blue" onclick="get('/finance-records/'+v('getFinId'))">Получить по ID</button>
+          </div>
+        </div>
+        <div class="card">
+          <label>POST /finance-records — создать запись</label>
+          <select id="finType">
+            <option value="payment">payment</option>
+            <option value="expense">expense</option>
+            <option value="refund">refund</option>
+          </select>
+          <input id="finAmount"   placeholder="Сумма (> 0)" value="15000" />
+          <input id="finCurrency" placeholder="Валюта" value="RUB" />
+          <input id="finDate"     placeholder="payment_date (YYYY-MM-DD)" value="2026-12-01" />
+          <input id="finClientId" placeholder="client_id (необязательно)" value="cl_1" />
+          <input id="finCaseId"   placeholder="case_id (необязательно)" value="cs_1" />
+          <input id="finDesc"     placeholder="Описание" value="Аванс по делу" />
+          <div class="btn-row">
+            <button class="btn-green" onclick="createFin()">Создать</button>
+          </div>
+        </div>
+        <div class="card">
+          <label>PATCH /finance-records/{id} — изменить статус</label>
+          <input id="patchFinId" placeholder="fin_1" value="fin_1" />
+          <select id="patchFinStatus">
+            <option value="pending">pending</option>
+            <option value="paid">paid</option>
+            <option value="cancelled">cancelled</option>
+          </select>
+          <div class="btn-row">
+            <button class="btn-yellow" onclick="patchFin()">Обновить статус</button>
+          </div>
+        </div>
+        <div class="card">
+          <label>DELETE /finance-records/{id} (только admin)</label>
+          <input id="deleteFinId" placeholder="fin_1" value="fin_1" />
+          <div class="btn-row">
+            <button class="btn-red" onclick="del('/finance-records/'+v('deleteFinId'))">Удалить</button>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- leftPanel -->
+
+    <!-- Result panel -->
+    <div id="rightPanel">
+      <div id="resultHeader">
+        <span id="resultLabel">Результат запроса</span>
+        <span id="resultStatus"></span>
+        <button id="clearResult" onclick="clearResult()">Очистить</button>
+      </div>
+      <div id="resultBody">Нажмите любую кнопку — ответ API появится здесь.</div>
+    </div>
+
+  </div><!-- content -->
+</div><!-- main -->
+
+<script>
+const BASE = 'http://localhost:8000';
+let token = localStorage.getItem('crm_token') || '';
+
+// ── helpers ──────────────────────────────────────────────────────
+function v(id) { return document.getElementById(id).value.trim(); }
+
+function updateTokenBar() {
+  const el = document.getElementById('tokenDisplay');
+  el.textContent = token ? token.slice(0, 60) + '…' : '— не установлен —';
+  el.style.color = token ? '#68d391' : '#fc8181';
+}
+updateTokenBar();
+
+function clearToken() {
+  token = '';
+  localStorage.removeItem('crm_token');
+  updateTokenBar();
+}
+
+function clearResult() {
+  document.getElementById('resultBody').innerHTML = '';
+  document.getElementById('resultStatus').textContent = '';
+  document.getElementById('resultLabel').textContent = 'Результат запроса';
+}
+
+// ── navigation ──────────────────────────────────────────────────
+document.querySelectorAll('.nav-item').forEach(el => {
+  el.addEventListener('click', () => {
+    document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+    document.querySelectorAll('.section').forEach(s => s.classList.remove('visible'));
+    el.classList.add('active');
+    document.getElementById('section-' + el.dataset.section).classList.add('visible');
+  });
+});
+
+// ── JSON syntax highlight ────────────────────────────────────────
+function highlight(json) {
+  return json
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(\.\d+)?([eE][+-]?\d+)?)/g, m => {
+      if (/^"/.test(m)) return /:$/.test(m) ? `<span class="j-key">${m}</span>` : `<span class="j-str">${m}</span>`;
+      if (/true|false/.test(m)) return `<span class="j-bool">${m}</span>`;
+      if (/null/.test(m)) return `<span class="j-null">${m}</span>`;
+      return `<span class="j-num">${m}</span>`;
+    });
+}
+
+function showResult(label, status, data) {
+  document.getElementById('resultLabel').textContent = label;
+  const statusEl = document.getElementById('resultStatus');
+  statusEl.textContent = `HTTP ${status}`;
+  statusEl.className = 'status-' + (status < 300 ? 'ok' : 'err');
+  let pretty;
+  try { pretty = JSON.stringify(typeof data === 'string' ? JSON.parse(data) : data, null, 2); }
+  catch { pretty = String(data); }
+  document.getElementById('resultBody').innerHTML = highlight(pretty);
+}
+
+// ── core request ─────────────────────────────────────────────────
+async function req(method, path, body) {
+  const headers = { 'Content-Type': 'application/json' };
+  if (token) headers['Authorization'] = 'Bearer ' + token;
+  try {
+    const res = await fetch(BASE + path, {
+      method,
+      headers,
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    const text = await res.text();
+    let json;
+    try { json = JSON.parse(text); } catch { json = text; }
+    showResult(`${method} ${path}`, res.status, json);
+    return { status: res.status, json };
+  } catch (e) {
+    showResult(`${method} ${path}`, 0, { error: e.message });
+  }
+}
+
+async function get(path)         { await req('GET',    path); }
+async function del(path)         { await req('DELETE', path); }
+async function post(path, body)  { await req('POST',   path, body); }
+async function patch(path, body) { await req('PATCH',  path, body); }
+
+// ── Auth ─────────────────────────────────────────────────────────
+async function doLogin() {
+  const r = await req('POST', '/auth/login', { email: v('loginEmail'), password: v('loginPassword') });
+  if (r && r.json && r.json.access_token) {
+    token = r.json.access_token;
+    localStorage.setItem('crm_token', token);
+    updateTokenBar();
+  }
+}
+
+// ── Users ────────────────────────────────────────────────────────
+function createUser() {
+  post('/users', { full_name: v('newUserName'), email: v('newUserEmail'), password: v('newUserPass'), role: v('newUserRole') });
+}
+function patchUser()  { patch('/users/'+v('patchUserId'), { full_name: v('patchUserName') }); }
+
+// ── Clients ──────────────────────────────────────────────────────
+function createClient() {
+  const body = { name: v('clientName'), phone: v('clientPhone'), email: v('clientEmail'), client_type: v('clientType') };
+  if (v('clientNotes')) body.notes = v('clientNotes');
+  post('/clients', body);
+}
+function patchClient() { patch('/clients/'+v('patchClientId'), { notes: v('patchClientNotes') }); }
+
+// ── Cases ────────────────────────────────────────────────────────
+function createCase() {
+  const body = { case_number: v('caseNumber'), title: v('caseTitle'), client_id: v('caseClientId'), status: v('caseStatus') };
+  if (v('caseDesc')) body.description = v('caseDesc');
+  post('/cases', body);
+}
+function patchCase() { patch('/cases/'+v('patchCaseId'), { status: v('patchCaseStatus') }); }
+
+// ── Tasks ────────────────────────────────────────────────────────
+function createTask() {
+  const body = { title: v('taskTitle'), due_date: v('taskDueDate'), priority: v('taskPriority') };
+  if (v('taskCaseId')) body.case_id = v('taskCaseId');
+  post('/tasks', body);
+}
+function patchTask() { patch('/tasks/'+v('patchTaskId'), { status: v('patchTaskStatus') }); }
+
+// ── Calendar ─────────────────────────────────────────────────────
+function createEvent() {
+  const body = { title: v('eventTitle'), start_at: v('eventStart'), end_at: v('eventEnd'), event_type: v('eventType') };
+  if (v('eventCaseId')) body.case_id = v('eventCaseId');
+  post('/calendar-events', body);
+}
+function patchEvent() { patch('/calendar-events/'+v('patchEventId'), { title: v('patchEventTitle') }); }
+
+// ── Documents ────────────────────────────────────────────────────
+function createDoc() {
+  const body = { title: v('docTitle'), doc_type: v('docType'), case_id: v('docCaseId') || null };
+  if (v('docClientId')) body.client_id = v('docClientId');
+  if (v('docFileName')) body.file_name = v('docFileName');
+  post('/documents', body);
+}
+function patchDoc() { patch('/documents/'+v('patchDocId'), { status: v('patchDocStatus') }); }
+
+// ── Finance ──────────────────────────────────────────────────────
+function createFin() {
+  const body = {
+    record_type: v('finType'), amount: parseFloat(v('finAmount')),
+    currency: v('finCurrency'), payment_date: v('finDate'),
+  };
+  if (v('finClientId')) body.client_id = v('finClientId');
+  if (v('finCaseId'))   body.case_id   = v('finCaseId');
+  if (v('finDesc'))     body.description = v('finDesc');
+  post('/finance-records', body);
+}
+function patchFin() { patch('/finance-records/'+v('patchFinId'), { status: v('patchFinStatus') }); }
+</script>
+</body>
+</html>
