@@ -1,9 +1,11 @@
-from fastapi import APIRouter, HTTPException, Depends
+import uuid
 from typing import Optional
+
+from fastapi import APIRouter, HTTPException, Depends
 
 from schemas.cases import CaseCreate, CaseUpdate, CaseOut
 from core.rbac import require_role
-from storage.memory import db, _now, _make_id
+from storage.database import get_db, row_to_dict, _now
 
 router = APIRouter()
 
@@ -13,30 +15,30 @@ def create_case(
     body: CaseCreate,
     current_user: dict = Depends(require_role("cases", "create")),
 ):
-    if body.client_id not in db["clients"]:
-        raise HTTPException(
-            status_code=422,
-            detail={"code": "INVALID_REFERENCE", "message": f"Client '{body.client_id}' not found"},
+    with get_db() as conn:
+        if not conn.execute("SELECT 1 FROM clients WHERE id = ?", (body.client_id,)).fetchone():
+            raise HTTPException(
+                status_code=422,
+                detail={"code": "INVALID_REFERENCE", "message": f"Client '{body.client_id}' not found"},
+            )
+        if conn.execute("SELECT 1 FROM legal_cases WHERE case_number = ?", (body.case_number,)).fetchone():
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "CASE_NUMBER_TAKEN", "message": "Case number already exists"},
+            )
+        cid = str(uuid.uuid4())
+        conn.execute(
+            "INSERT INTO legal_cases"
+            " (id,case_number,title,description,status,client_id,responsible_lawyer_id,"
+            "  court_name,next_hearing_date,opposing_party,case_summary,opened_at,closed_at)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (cid, body.case_number, body.title, body.description, body.status.value,
+             body.client_id, body.responsible_lawyer_id,
+             body.court_name, body.next_hearing_date, body.opposing_party, body.case_summary,
+             _now(), None),
         )
-    if any(c["case_number"] == body.case_number for c in db["cases"].values()):
-        raise HTTPException(
-            status_code=409,
-            detail={"code": "CASE_NUMBER_TAKEN", "message": "Case number already exists"},
-        )
-    cid = _make_id("cs", db["cases"])
-    record = {
-        "id":                   cid,
-        "case_number":          body.case_number,
-        "title":                body.title,
-        "description":          body.description,
-        "status":               body.status,
-        "client_id":            body.client_id,
-        "responsible_lawyer_id": body.responsible_lawyer_id,
-        "opened_at":            _now(),
-        "closed_at":            None,
-    }
-    db["cases"][cid] = record
-    return record
+        row = conn.execute("SELECT * FROM legal_cases WHERE id = ?", (cid,)).fetchone()
+    return row_to_dict(row)
 
 
 @router.get("", response_model=list[CaseOut], summary="List cases")
@@ -45,12 +47,17 @@ def list_cases(
     client_id: Optional[str] = None,
     current_user: dict = Depends(require_role("cases", "read")),
 ):
-    items = list(db["cases"].values())
+    query = "SELECT * FROM legal_cases WHERE 1=1"
+    params: list = []
     if status:
-        items = [c for c in items if c["status"] == status]
+        query += " AND status = ?"
+        params.append(status)
     if client_id:
-        items = [c for c in items if c["client_id"] == client_id]
-    return items
+        query += " AND client_id = ?"
+        params.append(client_id)
+    with get_db() as conn:
+        rows = conn.execute(query, params).fetchall()
+    return [row_to_dict(r) for r in rows]
 
 
 @router.get("/{case_id}", response_model=CaseOut, summary="Get case by id")
@@ -58,10 +65,11 @@ def get_case(
     case_id: str,
     current_user: dict = Depends(require_role("cases", "read")),
 ):
-    case = db["cases"].get(case_id)
-    if not case:
+    with get_db() as conn:
+        row = conn.execute("SELECT * FROM legal_cases WHERE id = ?", (case_id,)).fetchone()
+    if not row:
         raise HTTPException(status_code=404, detail={"code": "NOT_FOUND", "message": "Case not found"})
-    return case
+    return row_to_dict(row)
 
 
 @router.patch("/{case_id}", response_model=CaseOut, summary="Update case")
@@ -70,11 +78,15 @@ def update_case(
     body: CaseUpdate,
     current_user: dict = Depends(require_role("cases", "update")),
 ):
-    case = db["cases"].get(case_id)
-    if not case:
-        raise HTTPException(status_code=404, detail={"code": "NOT_FOUND", "message": "Case not found"})
-    case.update(body.model_dump(exclude_none=True))
-    return case
+    with get_db() as conn:
+        if not conn.execute("SELECT 1 FROM legal_cases WHERE id = ?", (case_id,)).fetchone():
+            raise HTTPException(status_code=404, detail={"code": "NOT_FOUND", "message": "Case not found"})
+        data = body.model_dump(mode="json", exclude_none=True)
+        if data:
+            sets = ", ".join(f"{k} = ?" for k in data)
+            conn.execute(f"UPDATE legal_cases SET {sets} WHERE id = ?", (*data.values(), case_id))
+        row = conn.execute("SELECT * FROM legal_cases WHERE id = ?", (case_id,)).fetchone()
+    return row_to_dict(row)
 
 
 @router.delete("/{case_id}", status_code=204, summary="Delete case (admin only)")
@@ -82,6 +94,7 @@ def delete_case(
     case_id: str,
     current_user: dict = Depends(require_role("cases", "delete")),
 ):
-    if case_id not in db["cases"]:
-        raise HTTPException(status_code=404, detail={"code": "NOT_FOUND", "message": "Case not found"})
-    del db["cases"][case_id]
+    with get_db() as conn:
+        if not conn.execute("SELECT 1 FROM legal_cases WHERE id = ?", (case_id,)).fetchone():
+            raise HTTPException(status_code=404, detail={"code": "NOT_FOUND", "message": "Case not found"})
+        conn.execute("DELETE FROM legal_cases WHERE id = ?", (case_id,))

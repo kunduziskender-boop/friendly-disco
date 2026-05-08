@@ -7,6 +7,8 @@ import os
 load_dotenv()
 
 from api import auth, users, clients, cases, tasks, calendar, documents, finance
+from storage.database import init_db, migrate_db
+from storage.seed import seed_db
 
 app = FastAPI(
     title=os.getenv("APP_TITLE", "Lawyer CRM API"),
@@ -21,6 +23,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+init_db()
+migrate_db()
+seed_db()
 
 
 @app.exception_handler(Exception)

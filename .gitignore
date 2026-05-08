@@ -3,9 +3,11 @@ backend/.env
 backend/venv/
 backend/**/__pycache__/
 backend/**/*.pyc
+backend/*.db
 
 # Frontend clone
 frontend-src/node_modules/
 frontend-src/dist/
 frontend-src/.vite/
 frontend-src/*.tsbuildinfo
+frontend-src/backend/

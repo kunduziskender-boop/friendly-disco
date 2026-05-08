@@ -1,9 +1,11 @@
-from fastapi import APIRouter, HTTPException, Depends
+import uuid
 from typing import Optional
+
+from fastapi import APIRouter, HTTPException, Depends
 
 from schemas.finance import FinanceRecordCreate, FinanceRecordUpdate, FinanceRecordOut
 from core.rbac import require_role
-from storage.memory import db, _now, _make_id
+from storage.database import get_db, row_to_dict, _now
 
 router = APIRouter()
 
@@ -13,32 +15,33 @@ def create_finance_record(
     body: FinanceRecordCreate,
     current_user: dict = Depends(require_role("finance_records", "create")),
 ):
-    if body.client_id and body.client_id not in db["clients"]:
-        raise HTTPException(
-            status_code=422,
-            detail={"code": "INVALID_REFERENCE", "message": f"Client '{body.client_id}' not found"},
+    with get_db() as conn:
+        if body.client_id and not conn.execute(
+            "SELECT 1 FROM clients WHERE id = ?", (body.client_id,)
+        ).fetchone():
+            raise HTTPException(
+                status_code=422,
+                detail={"code": "INVALID_REFERENCE", "message": f"Client '{body.client_id}' not found"},
+            )
+        if body.case_id and not conn.execute(
+            "SELECT 1 FROM legal_cases WHERE id = ?", (body.case_id,)
+        ).fetchone():
+            raise HTTPException(
+                status_code=422,
+                detail={"code": "INVALID_REFERENCE", "message": f"Case '{body.case_id}' not found"},
+            )
+        fid = str(uuid.uuid4())
+        conn.execute(
+            "INSERT INTO finance_records"
+            " (id,record_type,amount,currency,payment_date,status,client_id,case_id,description,created_by,created_at)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            (fid, body.record_type.value, body.amount, body.currency,
+             body.payment_date.isoformat(), body.status.value,
+             body.client_id, body.case_id, body.description,
+             current_user["id"], _now()),
         )
-    if body.case_id and body.case_id not in db["cases"]:
-        raise HTTPException(
-            status_code=422,
-            detail={"code": "INVALID_REFERENCE", "message": f"Case '{body.case_id}' not found"},
-        )
-    fid = _make_id("fin", db["finance_records"])
-    record = {
-        "id":           fid,
-        "record_type":  body.record_type,
-        "amount":       body.amount,
-        "currency":     body.currency,
-        "payment_date": body.payment_date.isoformat(),
-        "status":       body.status,
-        "client_id":    body.client_id,
-        "case_id":      body.case_id,
-        "description":  body.description,
-        "created_by":   current_user["id"],
-        "created_at":   _now(),
-    }
-    db["finance_records"][fid] = record
-    return record
+        row = conn.execute("SELECT * FROM finance_records WHERE id = ?", (fid,)).fetchone()
+    return row_to_dict(row)
 
 
 @router.get("", response_model=list[FinanceRecordOut], summary="List finance records")
@@ -49,16 +52,23 @@ def list_finance_records(
     case_id: Optional[str] = None,
     current_user: dict = Depends(require_role("finance_records", "read")),
 ):
-    items = list(db["finance_records"].values())
+    query = "SELECT * FROM finance_records WHERE 1=1"
+    params: list = []
     if record_type:
-        items = [r for r in items if r["record_type"] == record_type]
+        query += " AND record_type = ?"
+        params.append(record_type)
     if status:
-        items = [r for r in items if r["status"] == status]
+        query += " AND status = ?"
+        params.append(status)
     if client_id:
-        items = [r for r in items if r["client_id"] == client_id]
+        query += " AND client_id = ?"
+        params.append(client_id)
     if case_id:
-        items = [r for r in items if r["case_id"] == case_id]
-    return items
+        query += " AND case_id = ?"
+        params.append(case_id)
+    with get_db() as conn:
+        rows = conn.execute(query, params).fetchall()
+    return [row_to_dict(r) for r in rows]
 
 
 @router.get("/{record_id}", response_model=FinanceRecordOut, summary="Get finance record by id")
@@ -66,10 +76,11 @@ def get_finance_record(
     record_id: str,
     current_user: dict = Depends(require_role("finance_records", "read")),
 ):
-    record = db["finance_records"].get(record_id)
-    if not record:
+    with get_db() as conn:
+        row = conn.execute("SELECT * FROM finance_records WHERE id = ?", (record_id,)).fetchone()
+    if not row:
         raise HTTPException(status_code=404, detail={"code": "NOT_FOUND", "message": "Finance record not found"})
-    return record
+    return row_to_dict(row)
 
 
 @router.patch("/{record_id}", response_model=FinanceRecordOut, summary="Update finance record")
@@ -78,14 +89,15 @@ def update_finance_record(
     body: FinanceRecordUpdate,
     current_user: dict = Depends(require_role("finance_records", "update")),
 ):
-    record = db["finance_records"].get(record_id)
-    if not record:
-        raise HTTPException(status_code=404, detail={"code": "NOT_FOUND", "message": "Finance record not found"})
-    data = body.model_dump(exclude_none=True)
-    if "payment_date" in data:
-        data["payment_date"] = data["payment_date"].isoformat()
-    record.update(data)
-    return record
+    with get_db() as conn:
+        if not conn.execute("SELECT 1 FROM finance_records WHERE id = ?", (record_id,)).fetchone():
+            raise HTTPException(status_code=404, detail={"code": "NOT_FOUND", "message": "Finance record not found"})
+        data = body.model_dump(mode="json", exclude_none=True)
+        if data:
+            sets = ", ".join(f"{k} = ?" for k in data)
+            conn.execute(f"UPDATE finance_records SET {sets} WHERE id = ?", (*data.values(), record_id))
+        row = conn.execute("SELECT * FROM finance_records WHERE id = ?", (record_id,)).fetchone()
+    return row_to_dict(row)
 
 
 @router.delete("/{record_id}", status_code=204, summary="Delete finance record (admin only)")
@@ -93,6 +105,7 @@ def delete_finance_record(
     record_id: str,
     current_user: dict = Depends(require_role("finance_records", "delete")),
 ):
-    if record_id not in db["finance_records"]:
-        raise HTTPException(status_code=404, detail={"code": "NOT_FOUND", "message": "Finance record not found"})
-    del db["finance_records"][record_id]
+    with get_db() as conn:
+        if not conn.execute("SELECT 1 FROM finance_records WHERE id = ?", (record_id,)).fetchone():
+            raise HTTPException(status_code=404, detail={"code": "NOT_FOUND", "message": "Finance record not found"})
+        conn.execute("DELETE FROM finance_records WHERE id = ?", (record_id,))

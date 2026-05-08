@@ -17,6 +17,10 @@ class CaseCreate(BaseModel):
     client_id: str
     responsible_lawyer_id: Optional[str] = None
     status: CaseStatus = CaseStatus.open
+    court_name: Optional[str] = None
+    next_hearing_date: Optional[str] = None
+    opposing_party: Optional[str] = None
+    case_summary: Optional[str] = None
 
 
 class CaseUpdate(BaseModel):
@@ -25,6 +29,10 @@ class CaseUpdate(BaseModel):
     status: Optional[CaseStatus] = None
     responsible_lawyer_id: Optional[str] = None
     closed_at: Optional[str] = None
+    court_name: Optional[str] = None
+    next_hearing_date: Optional[str] = None
+    opposing_party: Optional[str] = None
+    case_summary: Optional[str] = None
 
 
 class CaseOut(BaseModel):
@@ -35,5 +43,9 @@ class CaseOut(BaseModel):
     status: str
     client_id: str
     responsible_lawyer_id: Optional[str]
+    court_name: Optional[str]
+    next_hearing_date: Optional[str]
+    opposing_party: Optional[str]
+    case_summary: Optional[str]
     opened_at: str
     closed_at: Optional[str]

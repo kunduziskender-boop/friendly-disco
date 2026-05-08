@@ -1,9 +1,11 @@
-from fastapi import APIRouter, HTTPException, Depends
+import uuid
 from typing import Optional
+
+from fastapi import APIRouter, HTTPException, Depends
 
 from schemas.tasks import TaskCreate, TaskUpdate, TaskOut
 from core.rbac import require_role
-from storage.memory import db, _now, _make_id
+from storage.database import get_db, row_to_dict, _now
 
 router = APIRouter()
 
@@ -13,27 +15,25 @@ def create_task(
     body: TaskCreate,
     current_user: dict = Depends(require_role("tasks", "create")),
 ):
-    if body.case_id and body.case_id not in db["cases"]:
-        raise HTTPException(
-            status_code=422,
-            detail={"code": "INVALID_REFERENCE", "message": f"Case '{body.case_id}' not found"},
+    with get_db() as conn:
+        if body.case_id and not conn.execute(
+            "SELECT 1 FROM legal_cases WHERE id = ?", (body.case_id,)
+        ).fetchone():
+            raise HTTPException(
+                status_code=422,
+                detail={"code": "INVALID_REFERENCE", "message": f"Case '{body.case_id}' not found"},
+            )
+        tid = str(uuid.uuid4())
+        conn.execute(
+            "INSERT INTO tasks"
+            " (id,title,description,due_date,status,priority,case_id,assignee_user_id,created_by,created_at,completed_at)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            (tid, body.title, body.description, body.due_date.isoformat(),
+             body.status.value, body.priority.value,
+             body.case_id, body.assignee_user_id, current_user["id"], _now(), None),
         )
-    tid = _make_id("tsk", db["tasks"])
-    record = {
-        "id":               tid,
-        "title":            body.title,
-        "description":      body.description,
-        "due_date":         body.due_date.isoformat(),
-        "status":           body.status,
-        "priority":         body.priority,
-        "case_id":          body.case_id,
-        "assignee_user_id": body.assignee_user_id,
-        "created_by":       current_user["id"],
-        "created_at":       _now(),
-        "completed_at":     None,
-    }
-    db["tasks"][tid] = record
-    return record
+        row = conn.execute("SELECT * FROM tasks WHERE id = ?", (tid,)).fetchone()
+    return row_to_dict(row)
 
 
 @router.get("", response_model=list[TaskOut], summary="List tasks")
@@ -43,14 +43,20 @@ def list_tasks(
     assignee_user_id: Optional[str] = None,
     current_user: dict = Depends(require_role("tasks", "read")),
 ):
-    items = list(db["tasks"].values())
+    query = "SELECT * FROM tasks WHERE 1=1"
+    params: list = []
     if status:
-        items = [t for t in items if t["status"] == status]
+        query += " AND status = ?"
+        params.append(status)
     if case_id:
-        items = [t for t in items if t["case_id"] == case_id]
+        query += " AND case_id = ?"
+        params.append(case_id)
     if assignee_user_id:
-        items = [t for t in items if t["assignee_user_id"] == assignee_user_id]
-    return items
+        query += " AND assignee_user_id = ?"
+        params.append(assignee_user_id)
+    with get_db() as conn:
+        rows = conn.execute(query, params).fetchall()
+    return [row_to_dict(r) for r in rows]
 
 
 @router.get("/{task_id}", response_model=TaskOut, summary="Get task by id")
@@ -58,10 +64,11 @@ def get_task(
     task_id: str,
     current_user: dict = Depends(require_role("tasks", "read")),
 ):
-    task = db["tasks"].get(task_id)
-    if not task:
+    with get_db() as conn:
+        row = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
+    if not row:
         raise HTTPException(status_code=404, detail={"code": "NOT_FOUND", "message": "Task not found"})
-    return task
+    return row_to_dict(row)
 
 
 @router.patch("/{task_id}", response_model=TaskOut, summary="Update task")
@@ -70,16 +77,15 @@ def update_task(
     body: TaskUpdate,
     current_user: dict = Depends(require_role("tasks", "update")),
 ):
-    task = db["tasks"].get(task_id)
-    if not task:
-        raise HTTPException(status_code=404, detail={"code": "NOT_FOUND", "message": "Task not found"})
-    data = body.model_dump(exclude_none=True)
-    if "due_date" in data:
-        data["due_date"] = data["due_date"].isoformat()
-    if "completed_at" in data:
-        data["completed_at"] = data["completed_at"].isoformat()
-    task.update(data)
-    return task
+    with get_db() as conn:
+        if not conn.execute("SELECT 1 FROM tasks WHERE id = ?", (task_id,)).fetchone():
+            raise HTTPException(status_code=404, detail={"code": "NOT_FOUND", "message": "Task not found"})
+        data = body.model_dump(mode="json", exclude_none=True)
+        if data:
+            sets = ", ".join(f"{k} = ?" for k in data)
+            conn.execute(f"UPDATE tasks SET {sets} WHERE id = ?", (*data.values(), task_id))
+        row = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
+    return row_to_dict(row)
 
 
 @router.delete("/{task_id}", status_code=204, summary="Delete task")
@@ -87,6 +93,7 @@ def delete_task(
     task_id: str,
     current_user: dict = Depends(require_role("tasks", "delete")),
 ):
-    if task_id not in db["tasks"]:
-        raise HTTPException(status_code=404, detail={"code": "NOT_FOUND", "message": "Task not found"})
-    del db["tasks"][task_id]
+    with get_db() as conn:
+        if not conn.execute("SELECT 1 FROM tasks WHERE id = ?", (task_id,)).fetchone():
+            raise HTTPException(status_code=404, detail={"code": "NOT_FOUND", "message": "Task not found"})
+        conn.execute("DELETE FROM tasks WHERE id = ?", (task_id,))

@@ -1,9 +1,11 @@
-from fastapi import APIRouter, HTTPException, Depends
+import uuid
 from typing import Optional
+
+from fastapi import APIRouter, HTTPException, Depends
 
 from schemas.documents import DocumentCreate, DocumentUpdate, DocumentOut
 from core.rbac import require_role
-from storage.memory import db, _now, _make_id
+from storage.database import get_db, row_to_dict, _now
 
 router = APIRouter()
 
@@ -13,30 +15,32 @@ def create_document(
     body: DocumentCreate,
     current_user: dict = Depends(require_role("documents", "create")),
 ):
-    if body.case_id and body.case_id not in db["cases"]:
-        raise HTTPException(
-            status_code=422,
-            detail={"code": "INVALID_REFERENCE", "message": f"Case '{body.case_id}' not found"},
+    with get_db() as conn:
+        if body.case_id and not conn.execute(
+            "SELECT 1 FROM legal_cases WHERE id = ?", (body.case_id,)
+        ).fetchone():
+            raise HTTPException(
+                status_code=422,
+                detail={"code": "INVALID_REFERENCE", "message": f"Case '{body.case_id}' not found"},
+            )
+        if body.client_id and not conn.execute(
+            "SELECT 1 FROM clients WHERE id = ?", (body.client_id,)
+        ).fetchone():
+            raise HTTPException(
+                status_code=422,
+                detail={"code": "INVALID_REFERENCE", "message": f"Client '{body.client_id}' not found"},
+            )
+        did = str(uuid.uuid4())
+        conn.execute(
+            "INSERT INTO documents"
+            " (id,title,doc_type,status,file_name,case_id,client_id,uploaded_by,uploaded_at)"
+            " VALUES (?,?,?,?,?,?,?,?,?)",
+            (did, body.title, body.doc_type.value, body.status.value,
+             body.file_name, body.case_id, body.client_id,
+             current_user["id"], _now()),
         )
-    if body.client_id and body.client_id not in db["clients"]:
-        raise HTTPException(
-            status_code=422,
-            detail={"code": "INVALID_REFERENCE", "message": f"Client '{body.client_id}' not found"},
-        )
-    did = _make_id("doc", db["documents"])
-    record = {
-        "id":          did,
-        "title":       body.title,
-        "doc_type":    body.doc_type,
-        "case_id":     body.case_id,
-        "client_id":   body.client_id,
-        "file_name":   body.file_name,
-        "status":      body.status,
-        "uploaded_by": current_user["id"],
-        "uploaded_at": _now(),
-    }
-    db["documents"][did] = record
-    return record
+        row = conn.execute("SELECT * FROM documents WHERE id = ?", (did,)).fetchone()
+    return row_to_dict(row)
 
 
 @router.get("", response_model=list[DocumentOut], summary="List documents")
@@ -47,16 +51,23 @@ def list_documents(
     status: Optional[str] = None,
     current_user: dict = Depends(require_role("documents", "read")),
 ):
-    items = list(db["documents"].values())
+    query = "SELECT * FROM documents WHERE 1=1"
+    params: list = []
     if doc_type:
-        items = [d for d in items if d["doc_type"] == doc_type]
+        query += " AND doc_type = ?"
+        params.append(doc_type)
     if case_id:
-        items = [d for d in items if d["case_id"] == case_id]
+        query += " AND case_id = ?"
+        params.append(case_id)
     if client_id:
-        items = [d for d in items if d["client_id"] == client_id]
+        query += " AND client_id = ?"
+        params.append(client_id)
     if status:
-        items = [d for d in items if d["status"] == status]
-    return items
+        query += " AND status = ?"
+        params.append(status)
+    with get_db() as conn:
+        rows = conn.execute(query, params).fetchall()
+    return [row_to_dict(r) for r in rows]
 
 
 @router.get("/{doc_id}", response_model=DocumentOut, summary="Get document by id")
@@ -64,10 +75,11 @@ def get_document(
     doc_id: str,
     current_user: dict = Depends(require_role("documents", "read")),
 ):
-    doc = db["documents"].get(doc_id)
-    if not doc:
+    with get_db() as conn:
+        row = conn.execute("SELECT * FROM documents WHERE id = ?", (doc_id,)).fetchone()
+    if not row:
         raise HTTPException(status_code=404, detail={"code": "NOT_FOUND", "message": "Document not found"})
-    return doc
+    return row_to_dict(row)
 
 
 @router.patch("/{doc_id}", response_model=DocumentOut, summary="Update document")
@@ -76,11 +88,15 @@ def update_document(
     body: DocumentUpdate,
     current_user: dict = Depends(require_role("documents", "update")),
 ):
-    doc = db["documents"].get(doc_id)
-    if not doc:
-        raise HTTPException(status_code=404, detail={"code": "NOT_FOUND", "message": "Document not found"})
-    doc.update(body.model_dump(exclude_none=True))
-    return doc
+    with get_db() as conn:
+        if not conn.execute("SELECT 1 FROM documents WHERE id = ?", (doc_id,)).fetchone():
+            raise HTTPException(status_code=404, detail={"code": "NOT_FOUND", "message": "Document not found"})
+        data = body.model_dump(mode="json", exclude_none=True)
+        if data:
+            sets = ", ".join(f"{k} = ?" for k in data)
+            conn.execute(f"UPDATE documents SET {sets} WHERE id = ?", (*data.values(), doc_id))
+        row = conn.execute("SELECT * FROM documents WHERE id = ?", (doc_id,)).fetchone()
+    return row_to_dict(row)
 
 
 @router.delete("/{doc_id}", status_code=204, summary="Delete document")
@@ -88,6 +104,7 @@ def delete_document(
     doc_id: str,
     current_user: dict = Depends(require_role("documents", "delete")),
 ):
-    if doc_id not in db["documents"]:
-        raise HTTPException(status_code=404, detail={"code": "NOT_FOUND", "message": "Document not found"})
-    del db["documents"][doc_id]
+    with get_db() as conn:
+        if not conn.execute("SELECT 1 FROM documents WHERE id = ?", (doc_id,)).fetchone():
+            raise HTTPException(status_code=404, detail={"code": "NOT_FOUND", "message": "Document not found"})
+        conn.execute("DELETE FROM documents WHERE id = ?", (doc_id,))

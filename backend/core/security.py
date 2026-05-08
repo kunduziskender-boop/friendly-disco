@@ -43,13 +43,15 @@ def decode_token(token: str) -> dict:
 
 
 def get_current_user(token: str = Depends(oauth2_scheme)):
-    from storage.memory import db
+    from storage.database import get_db, row_to_dict
 
     payload = decode_token(token)
     user_id: str = payload.get("sub")
     if user_id is None:
         raise HTTPException(status_code=401, detail={"code": "INVALID_TOKEN", "message": "Invalid token payload"})
-    user = db["users"].get(user_id)
+    with get_db() as conn:
+        row = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+    user = row_to_dict(row)
     if user is None or not user["is_active"]:
         raise HTTPException(status_code=401, detail={"code": "USER_NOT_FOUND", "message": "User not found or inactive"})
     return user

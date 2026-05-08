@@ -1,5 +1,4 @@
 from fastapi import APIRouter, HTTPException, Depends
-from fastapi.responses import JSONResponse
 
 from schemas.auth import LoginRequest, TokenResponse
 from core.security import (
@@ -8,17 +7,16 @@ from core.security import (
     get_current_user,
     ACCESS_TOKEN_EXPIRE_MINUTES,
 )
-from storage.memory import db
+from storage.database import get_db, row_to_dict
 
 router = APIRouter()
 
 
 @router.post("/login", response_model=TokenResponse, summary="Login with email and password")
 def login(body: LoginRequest):
-    user = next(
-        (u for u in db["users"].values() if u["email"] == body.email),
-        None,
-    )
+    with get_db() as conn:
+        row = conn.execute("SELECT * FROM users WHERE email = ?", (body.email,)).fetchone()
+    user = row_to_dict(row)
     if not user or not verify_password(body.password, user["password_hash"]):
         raise HTTPException(
             status_code=401,

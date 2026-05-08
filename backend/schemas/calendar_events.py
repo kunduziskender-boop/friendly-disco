@@ -18,6 +18,8 @@ class CalendarEventCreate(BaseModel):
     end_at: datetime
     event_type: EventType = EventType.other
     case_id: Optional[str] = None
+    client_id: Optional[str] = None
+    location: Optional[str] = None
     participants: list[str] = []
 
     @model_validator(mode="after")
@@ -34,6 +36,8 @@ class CalendarEventUpdate(BaseModel):
     end_at: Optional[datetime] = None
     event_type: Optional[EventType] = None
     case_id: Optional[str] = None
+    client_id: Optional[str] = None
+    location: Optional[str] = None
     participants: Optional[list[str]] = None
 
 
@@ -45,5 +49,7 @@ class CalendarEventOut(BaseModel):
     end_at: str
     event_type: str
     case_id: Optional[str]
+    client_id: Optional[str]
+    location: Optional[str]
     participants: list[str]
     created_by: str
