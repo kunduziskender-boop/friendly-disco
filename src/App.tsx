@@ -1,5 +1,18 @@
-import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react";
-import { auth, login, clientsApi, casesApi, eventsApi, financeApi } from "./api";
+import { useCallback, useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
+import {
+  auth,
+  login,
+  register,
+  clientsApi,
+  casesApi,
+  eventsApi,
+  financeApi,
+  fetchMe,
+  roleHintRu,
+  roleTitleRu,
+  AUTH_EXPIRED_EVENT,
+  type MeUser,
+} from "./api";
 import type {
   Appointment,
   Client,
@@ -30,8 +43,16 @@ const FINANCE_STATUS_LABEL: Record<FinanceStatus, string> = {
 const PHONE_RE = /^\+?[1-9]\d{6,14}$/;
 function validatePhone(raw: string): string | null {
   const v = raw.replace(/\s/g, "");
-  if (!v) return null; // empty is OK — api.ts uses a fallback
+  if (!v) return null;
   return PHONE_RE.test(v) ? null : "Формат: +79991234567 (7–15 цифр, без пробелов)";
+}
+
+const EMAIL_SIMPLE_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+function validateEmailSimple(raw: string): string | null {
+  const t = raw.trim();
+  if (!t) return "Укажите email.";
+  if (!EMAIL_SIMPLE_RE.test(t)) return "Некорректный формат email, например name@company.ru.";
+  return null;
 }
 
 function clientLabel(clients: Client[], id: string | null): string {
@@ -53,6 +74,12 @@ function errMsg(e: unknown): string {
 export default function App() {
   const [loggedIn, setLoggedIn] = useState(auth.hasToken());
 
+  useEffect(() => {
+    const onSessionLost = () => setLoggedIn(false);
+    window.addEventListener(AUTH_EXPIRED_EVENT, onSessionLost);
+    return () => window.removeEventListener(AUTH_EXPIRED_EVENT, onSessionLost);
+  }, []);
+
   const handleLogout = useCallback(() => {
     auth.clear();
     setLoggedIn(false);
@@ -65,17 +92,46 @@ export default function App() {
 // ── Login screen ─────────────────────────────────────────────────────────────
 
 function LoginScreen({ onSuccess }: { onSuccess: () => void }) {
-  const [email, setEmail] = useState("lawyer@example.com");
-  const [password, setPassword] = useState("Lawyer1234");
+  const [mode, setMode] = useState<"login" | "register">("login");
+  const [fullName, setFullName] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const switchMode = (next: "login" | "register") => {
+    setMode(next);
+    setError(null);
+    if (next === "login") {
+      setFullName("");
+    }
+  };
+
   const submit = async () => {
-    if (!email.trim() || !password) return;
+    if (!email.trim()) {
+      setError("Укажите email.");
+      return;
+    }
+    if (!password) {
+      setError("Укажите пароль.");
+      return;
+    }
+    if (mode === "register" && !fullName.trim()) {
+      setError("Укажите ФИО или имя.");
+      return;
+    }
+    if (mode === "register" && password.length < 6) {
+      setError("Пароль не короче 6 символов");
+      return;
+    }
     setLoading(true);
     setError(null);
     try {
-      await login(email.trim(), password);
+      if (mode === "register") {
+        await register(fullName.trim(), email.trim(), password);
+      } else {
+        await login(email.trim(), password);
+      }
       onSuccess();
     } catch (e) {
       setError(errMsg(e));
@@ -84,22 +140,41 @@ function LoginScreen({ onSuccess }: { onSuccess: () => void }) {
     }
   };
 
+  const title = mode === "login" ? "Вход" : "Регистрация";
+  const subtitle =
+    mode === "login"
+      ? "Войдите, чтобы продолжить"
+      : "Создайте аккаунт — вам будет назначена роль «помощник»";
+
   return (
     <div style={loginStyle.wrap}>
       <div style={loginStyle.box}>
         <h1 style={{ margin: "0 0 0.25rem", fontSize: "1.4rem" }}>CRM адвоката</h1>
         <p style={{ margin: "0 0 1.5rem", color: "var(--muted)", fontSize: "0.9rem" }}>
-          Войдите, чтобы продолжить
+          <strong>{title}</strong>
+          {" — "}
+          {subtitle}
         </p>
-        <label style={form.label}>
+        {mode === "register" && (
+          <label style={form.label}>
+            ФИО / имя
+            <input style={form.input} type="text" value={fullName} placeholder="Иванова Мария Сергеевна"
+              autoComplete="name"
+              onChange={(e) => setFullName(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && submit()} />
+          </label>
+        )}
+        <label style={{ ...form.label, marginTop: mode === "register" ? "0.75rem" : 0 }}>
           Email
-          <input style={form.input} type="email" value={email}
+          <input style={form.input} type="email" value={email} placeholder="you@example.com"
+            autoComplete={mode === "register" ? "email" : "username"}
             onChange={(e) => setEmail(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && submit()} />
         </label>
         <label style={{ ...form.label, marginTop: "0.75rem" }}>
           Пароль
           <input style={form.input} type="password" value={password}
+            autoComplete={mode === "register" ? "new-password" : "current-password"}
             onChange={(e) => setPassword(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && submit()} />
         </label>
@@ -109,11 +184,62 @@ function LoginScreen({ onSuccess }: { onSuccess: () => void }) {
           style={{ ...btn.primary, marginTop: "1.1rem", width: "100%", opacity: loading ? 0.6 : 1 }}
           onClick={submit} disabled={loading}
         >
-          {loading ? "Вход…" : "Войти"}
+          {loading ? (mode === "login" ? "Вход…" : "Регистрация…") : mode === "login" ? "Войти" : "Зарегистрироваться"}
         </button>
-        <p style={{ marginTop: "1rem", fontSize: "0.8rem", color: "var(--muted)", textAlign: "center" }}>
-          lawyer / admin / assistant @example.com
+        <p style={{ marginTop: "1rem", fontSize: "0.85rem", color: "var(--muted)", textAlign: "center", lineHeight: 1.45 }}>
+          {mode === "login" ? (
+            <>
+              Нет аккаунта?{" "}
+              <button type="button" onClick={() => switchMode("register")}
+                style={{ ...btn.link, padding: 0, fontSize: "inherit", display: "inline" }}>
+                Регистрация
+              </button>
+            </>
+          ) : (
+            <>
+              Уже есть аккаунт?{" "}
+              <button type="button" onClick={() => switchMode("login")}
+                style={{ ...btn.link, padding: 0, fontSize: "inherit", display: "inline" }}>
+                Войти
+              </button>
+            </>
+          )}
         </p>
+        {mode === "login" && (
+          <>
+            <p style={{ marginTop: "0.75rem", fontSize: "0.75rem", color: "var(--muted)", textAlign: "center" }}>
+              Самостоятельная регистрация даёт роль «помощник». Демо после чистого seed:{" "}
+              <strong>assistant@example.com</strong> / Assist1234, <strong>lawyer@example.com</strong> / Lawyer1234,{" "}
+              <strong>admin@example.com</strong> / Admin1234.
+            </p>
+            <details
+              style={{
+                marginTop: "0.65rem",
+                fontSize: "0.75rem",
+                color: "var(--muted)",
+                lineHeight: 1.45,
+              }}
+            >
+              <summary style={{ cursor: "pointer", fontWeight: 600, color: "var(--text)" }}>
+                Кто есть кто по ролям
+              </summary>
+              <ul style={{ margin: "0.5rem 0 0", paddingLeft: "1.1rem", textAlign: "left" }}>
+                <li>
+                  <strong>Администратор</strong> — управление пользователями и всем данным CRM без ограничений по строкам.
+                </li>
+                <li>
+                  <strong>Юрист</strong> — полный доступ к клиентам, делам, финансовым записям и задачам (в том числе чужих в рамках конторы).
+                </li>
+                <li>
+                  <strong>Помощник</strong> — ограниченный доступ: в основном свои клиенты и связанные с ними дела и записи (см. правила на бэкенде).
+                </li>
+              </ul>
+              <p style={{ margin: "0.35rem 0 0", textAlign: "center" }}>
+                После входа ФИО, email и вашей роли видно в шапке приложения.
+              </p>
+            </details>
+          </>
+        )}
       </div>
     </div>
   );
@@ -145,10 +271,27 @@ function FieldError({ msg }: { msg: string | null }) {
   return <span style={{ fontSize: "0.8rem", color: "var(--danger)", marginTop: 2 }}>{msg}</span>;
 }
 
+function Modal({ onClose, children }: { onClose: () => void; children: ReactNode }) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+  return (
+    <div style={modal.backdrop} onClick={onClose}>
+      <div style={modal.box} onClick={(e) => e.stopPropagation()}>
+        {children}
+      </div>
+    </div>
+  );
+}
+
 // ── Main app ──────────────────────────────────────────────────────────────────
 
 function MainApp({ onLogout }: { onLogout: () => void }) {
   const [tab, setTab] = useState<Tab>("обзор");
+  const [me, setMe] = useState<MeUser | null>(null);
+  const [meLoaded, setMeLoaded] = useState(false);
 
   const [clients, setClients] = useState<Client[]>([]);
   const [cases, setCases] = useState<LegalCase[]>([]);
@@ -189,6 +332,23 @@ function MainApp({ onLogout }: { onLogout: () => void }) {
     loadClients(); loadCases(); loadEvents(); loadFinance();
   }, [loadClients, loadCases, loadEvents, loadFinance]);
 
+  useEffect(() => {
+    let cancelled = false;
+    void fetchMe().then(
+      (user) => {
+        if (!cancelled) setMe(user);
+      },
+      () => {
+        if (!cancelled) setMe(null);
+      }
+    ).finally(() => {
+      if (!cancelled) setMeLoaded(true);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const stats = useMemo(() => ({
     clients: clients.length,
     open: cases.filter((c) => c.status !== "закрыто").length,
@@ -200,7 +360,40 @@ function MainApp({ onLogout }: { onLogout: () => void }) {
       <header style={layout.header}>
         <div>
           <h1 style={{ margin: 0, fontSize: "1.35rem" }}>CRM адвоката</h1>
-          <p style={{ margin: "0.25rem 0 0", color: "var(--muted)", fontSize: "0.9rem" }}>Данные сохраняются в базе данных.</p>
+          {me ? (
+            <div style={{ marginTop: "0.45rem" }}>
+              <p style={{ margin: 0, fontSize: "0.95rem", color: "var(--text)", lineHeight: 1.45 }}>
+                Вошли как <strong>{me.full_name}</strong>
+                {" · "}
+                <span
+                  title={roleHintRu(me.role)}
+                  style={{
+                    display: "inline-block",
+                    background: "var(--accent-soft)",
+                    border: "1px solid var(--border)",
+                    borderRadius: 6,
+                    padding: "0.12rem 0.45rem",
+                    fontSize: "0.82rem",
+                    fontWeight: 600,
+                    color: "var(--accent)",
+                  }}
+                >
+                  {roleTitleRu(me.role)}
+                </span>
+              </p>
+              <p style={{ margin: "0.2rem 0 0", color: "var(--muted)", fontSize: "0.82rem" }}>{me.email}</p>
+              <p style={{ margin: "0.25rem 0 0", color: "var(--muted)", fontSize: "0.78rem", maxWidth: 420, lineHeight: 1.45 }}>
+                {roleHintRu(me.role)}
+              </p>
+            </div>
+          ) : !meLoaded ? (
+            <p style={{ margin: "0.25rem 0 0", color: "var(--muted)", fontSize: "0.9rem" }}>Загрузка профиля…</p>
+          ) : (
+            <p style={{ margin: "0.25rem 0 0", color: "var(--danger)", fontSize: "0.88rem" }}>
+              Не удалось загрузить профиль. Попробуйте выйти и войти снова.
+            </p>
+          )}
+          <p style={{ margin: "0.35rem 0 0", color: "var(--muted)", fontSize: "0.82rem" }}>Данные сохраняются в базе данных.</p>
         </div>
         <nav style={layout.nav}>
           {(["обзор", "клиенты", "дела", "встречи", "финансы"] as const).map((t) => (
@@ -224,7 +417,8 @@ function MainApp({ onLogout }: { onLogout: () => void }) {
         {tab === "дела" && (
           <CasesTab cases={cases} clients={clients} loading={loadingCases} error={errorCases} onRefresh={loadCases}
             onAdd={async (c) => { await casesApi.create(c); await loadCases(); }}
-            onStatusChange={async (id, status) => { await casesApi.updateStatus(id, status); await loadCases(); }} />
+            onStatusChange={async (id, status) => { await casesApi.updateStatus(id, status); await loadCases(); }}
+            onRemove={async (id) => { await casesApi.remove(id); await loadCases(); }} />
         )}
         {tab === "встречи" && (
           <AppointmentsTab appointments={appointments} clients={clients} loading={loadingEvents} error={errorEvents} onRefresh={loadEvents}
@@ -300,9 +494,11 @@ function ClientsTab({ clients, cases, appointments, financeRecords, loading, err
   onRemove: (id: string) => Promise<void>;
 }) {
   const [name, setName] = useState("");
+  const [nameError, setNameError] = useState<string | null>(null);
   const [phone, setPhone] = useState("");
   const [phoneError, setPhoneError] = useState<string | null>(null);
   const [email, setEmail] = useState("");
+  const [emailError, setEmailError] = useState<string | null>(null);
   const [notes, setNotes] = useState("");
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -311,23 +507,58 @@ function ClientsTab({ clients, cases, appointments, financeRecords, loading, err
   const handlePhoneChange = (v: string) => {
     setPhone(v);
     setPhoneError(validatePhone(v));
+    setSaveError(null);
   };
 
   const add = async () => {
+    setSaveError(null);
+    setNameError(null);
+    setEmailError(null);
+    if (!name.trim()) {
+      setNameError("Укажите ФИО или название клиента.");
+      setSaveError("Укажите ФИО или название клиента.");
+      return;
+    }
+    const pDigits = phone.replace(/\s/g, "");
+    if (!pDigits) {
+      setPhoneError("Укажите телефон.");
+      setSaveError("Укажите телефон.");
+      return;
+    }
     const pe = validatePhone(phone);
-    if (pe) { setPhoneError(pe); return; }
-    if (!name.trim()) return;
-    setSaving(true); setSaveError(null);
+    if (pe) {
+      setPhoneError(pe);
+      setSaveError(pe);
+      return;
+    }
+    const ee = validateEmailSimple(email);
+    if (ee) {
+      setEmailError(ee);
+      setSaveError(ee);
+      return;
+    }
+    setSaving(true);
     try {
       await onAdd({ name: name.trim(), phone, email, notes });
-      setName(""); setPhone(""); setPhoneError(null); setEmail(""); setNotes("");
+      setName("");
+      setNameError(null);
+      setPhone("");
+      setPhoneError(null);
+      setEmail("");
+      setEmailError(null);
+      setNotes("");
     } catch (e) { setSaveError(errMsg(e)); }
     finally { setSaving(false); }
   };
 
   const remove = async (id: string) => {
     if (!confirm("Удалить клиента?")) return;
-    try { await onRemove(id); } catch (e) { alert(errMsg(e)); }
+    try {
+      await onRemove(id);
+      setSelectedId((cur) => (cur === id ? null : cur));
+    } catch (e) {
+      alert(errMsg(e));
+    }
   };
 
   return (
@@ -337,7 +568,16 @@ function ClientsTab({ clients, cases, appointments, financeRecords, loading, err
         <div style={form.grid}>
           <label style={form.label}>
             ФИО
-            <input style={form.input} value={name} onChange={(e) => setName(e.target.value)} />
+            <input
+              style={{ ...form.input, borderColor: nameError ? "var(--danger)" : undefined }}
+              value={name}
+              onChange={(e) => {
+                setName(e.target.value);
+                setNameError(null);
+                setSaveError(null);
+              }}
+            />
+            <FieldError msg={nameError} />
           </label>
           <label style={form.label}>
             Телефон
@@ -349,7 +589,16 @@ function ClientsTab({ clients, cases, appointments, financeRecords, loading, err
           </label>
           <label style={form.label}>
             Email
-            <input style={form.input} value={email} onChange={(e) => setEmail(e.target.value)} />
+            <input
+              style={{ ...form.input, borderColor: emailError ? "var(--danger)" : undefined }}
+              value={email}
+              onChange={(e) => {
+                setEmail(e.target.value);
+                setEmailError(null);
+                setSaveError(null);
+              }}
+            />
+            <FieldError msg={emailError} />
           </label>
           <label style={{ ...form.label, gridColumn: "1 / -1" }}>
             Заметки
@@ -359,7 +608,7 @@ function ClientsTab({ clients, cases, appointments, financeRecords, loading, err
         {saveError && <ErrorBanner message={saveError} />}
         <button type="button"
           style={{ ...btn.primary, marginTop: "0.75rem", opacity: saving ? 0.6 : 1 }}
-          onClick={add} disabled={saving || !name.trim() || !!phoneError}>
+          onClick={add} disabled={saving}>
           {saving ? "Сохранение…" : "Добавить клиента"}
         </button>
       </section>
@@ -374,17 +623,31 @@ function ClientsTab({ clients, cases, appointments, financeRecords, loading, err
             {clients.map((c) => (
               <div
                 key={c.id}
-                onClick={() => setSelectedId(c.id === selectedId ? null : c.id)}
                 style={{
                   ...card.listItem,
-                  cursor: "pointer",
+                  alignItems: "center",
                   borderRadius: 8,
                   padding: "0.75rem 0.6rem",
                   background: selectedId === c.id ? "var(--accent-soft)" : undefined,
                   transition: "background 0.15s",
                 }}
               >
-                <div>
+                <div
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => setSelectedId(c.id === selectedId ? null : c.id)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      setSelectedId(c.id === selectedId ? null : c.id);
+                    }
+                  }}
+                  style={{
+                    cursor: "pointer",
+                    flex: "1 1 auto",
+                    minWidth: 0,
+                  }}
+                >
                   <strong>{c.name}</strong>
                   <div style={{ color: "var(--muted)", fontSize: "0.9rem" }}>
                     {[c.phone, c.email].filter(Boolean).join(" · ") || "—"}
@@ -393,8 +656,8 @@ function ClientsTab({ clients, cases, appointments, financeRecords, loading, err
                 </div>
                 <button
                   type="button"
-                  style={btn.danger}
-                  onClick={(e) => { e.stopPropagation(); remove(c.id); }}
+                  style={{ ...btn.danger, flexShrink: 0 }}
+                  onClick={() => void remove(c.id)}
                 >
                   Удалить
                 </button>
@@ -408,13 +671,16 @@ function ClientsTab({ clients, cases, appointments, financeRecords, loading, err
         const client = clients.find((c) => c.id === selectedId);
         if (!client) return null;
         return (
-          <ClientDetail
-            client={client}
-            cases={cases.filter((c) => c.clientId === selectedId)}
-            appointments={appointments.filter((a) => a.clientId === selectedId)}
-            financeRecords={financeRecords.filter((f) => f.clientId === selectedId)}
-            onClose={() => setSelectedId(null)}
-          />
+          <Modal onClose={() => setSelectedId(null)}>
+            <ClientDetail
+              client={client}
+              cases={cases.filter((c) => c.clientId === selectedId)}
+              appointments={appointments.filter((a) => a.clientId === selectedId)}
+              financeRecords={financeRecords.filter((f) => f.clientId === selectedId)}
+              onClose={() => setSelectedId(null)}
+              onDelete={() => void remove(client.id)}
+            />
+          </Modal>
         );
       })()}
     </div>
@@ -423,12 +689,13 @@ function ClientsTab({ clients, cases, appointments, financeRecords, loading, err
 
 // ── Client detail panel ───────────────────────────────────────────────────────
 
-function ClientDetail({ client, cases, appointments, financeRecords, onClose }: {
+function ClientDetail({ client, cases, appointments, financeRecords, onClose, onDelete }: {
   client: Client;
   cases: LegalCase[];
   appointments: Appointment[];
   financeRecords: FinanceRecord[];
   onClose: () => void;
+  onDelete?: () => void;
 }) {
   const balance = financeRecords
     .filter((r) => r.status !== "cancelled")
@@ -463,7 +730,7 @@ function ClientDetail({ client, cases, appointments, financeRecords, onClose }: 
               <div key={c.id} style={{ marginBottom: "0.5rem", fontSize: "0.9rem" }}>
                 <span style={casePill[c.status]}>{c.status}</span>{" "}
                 <strong>{c.title}</strong>
-                {c.nextDeadline && <span style={{ color: "var(--muted)" }}> · до {c.nextDeadline}</span>}
+                {c.nextDeadline && <span style={{ color: "var(--muted)" }}> · до {formatDate(c.nextDeadline)}</span>}
               </div>
             ))
           }
@@ -520,17 +787,25 @@ function ClientDetail({ client, cases, appointments, financeRecords, onClose }: 
           }
         </div>
       </div>
+      {onDelete ? (
+        <div style={{ marginTop: "1.25rem", paddingTop: "1rem", borderTop: "1px solid var(--border)" }}>
+          <button type="button" style={btn.danger} onClick={onDelete}>
+            Удалить клиента
+          </button>
+        </div>
+      ) : null}
     </section>
   );
 }
 
 // ── Cases tab ─────────────────────────────────────────────────────────────────
 
-function CasesTab({ cases, clients, loading, error, onRefresh, onAdd, onStatusChange }: {
+function CasesTab({ cases, clients, loading, error, onRefresh, onAdd, onStatusChange, onRemove }: {
   cases: LegalCase[]; clients: Client[];
   loading: boolean; error: string | null; onRefresh: () => void;
   onAdd: (c: Omit<LegalCase, "id">) => Promise<void>;
   onStatusChange: (id: string, status: CaseStatus) => Promise<void>;
+  onRemove: (id: string) => Promise<void>;
 }) {
   const [clientId, setClientId] = useState("");
   const [title, setTitle] = useState("");
@@ -542,13 +817,37 @@ function CasesTab({ cases, clients, loading, error, onRefresh, onAdd, onStatusCh
   const [saveError, setSaveError] = useState<string | null>(null);
 
   const add = async () => {
-    if (!clientId || !title.trim()) return;
-    setSaving(true); setSaveError(null);
+    setSaveError(null);
+    if (!clientId) {
+      setSaveError("Выберите клиента.");
+      return;
+    }
+    if (!title.trim()) {
+      setSaveError("Укажите название или номер дела.");
+      return;
+    }
+    setSaving(true);
     try {
-      await onAdd({ clientId, title: title.trim(), courtOrAuthority: court.trim(), status, nextDeadline: deadline, summary: summary.trim() });
+      await onAdd({
+        clientId,
+        title: title.trim(),
+        courtOrAuthority: court.trim(),
+        status,
+        nextDeadline: parseDateInput(deadline),
+        summary: summary.trim(),
+      });
       setTitle(""); setCourt(""); setDeadline(""); setSummary("");
     } catch (e) { setSaveError(errMsg(e)); }
     finally { setSaving(false); }
+  };
+
+  const remove = async (id: string) => {
+    if (!confirm("Удалить это дело? Будут удалены связанные задачи, встречи по делу, документы и финансовые строки.")) return;
+    try {
+      await onRemove(id);
+    } catch (e) {
+      alert(errMsg(e));
+    }
   };
 
   return (
@@ -579,7 +878,13 @@ function CasesTab({ cases, clients, loading, error, onRefresh, onAdd, onStatusCh
           </label>
           <label style={form.label}>
             След. срок
-            <input type="date" style={form.input} value={deadline} onChange={(e) => setDeadline(e.target.value)} />
+            <input
+              style={form.input}
+              value={deadline}
+              placeholder="ДД.ММ.ГГГГ"
+              maxLength={10}
+              onChange={(e) => setDeadline(maskDateInput(e.target.value))}
+            />
           </label>
           <label style={{ ...form.label, gridColumn: "1 / -1" }}>
             Кратко по сути
@@ -589,7 +894,7 @@ function CasesTab({ cases, clients, loading, error, onRefresh, onAdd, onStatusCh
         {saveError && <ErrorBanner message={saveError} />}
         <button type="button"
           style={{ ...btn.primary, marginTop: "0.75rem", opacity: saving ? 0.6 : 1 }}
-          onClick={add} disabled={saving || !clientId || !title.trim()}>
+          onClick={add} disabled={saving}>
           {saving ? "Сохранение…" : "Добавить дело"}
         </button>
         {!clients.length && <p style={{ marginTop: "0.5rem", color: "var(--muted)", fontSize: "0.85rem" }}>Сначала добавьте клиента.</p>}
@@ -603,21 +908,26 @@ function CasesTab({ cases, clients, loading, error, onRefresh, onAdd, onStatusCh
         {!loading && cases.length > 0 && (
           <div style={{ display: "grid", gap: "0.75rem" }}>
             {cases.map((k) => (
-              <div key={k.id} style={card.listItem}>
-                <div>
+              <div key={k.id} style={{ ...card.listItem, alignItems: "center" }}>
+                <div style={{ flex: "1 1 auto", minWidth: 0 }}>
                   <strong>{k.title}</strong>{" "}
                   <span style={{ color: "var(--muted)" }}>({clientLabel(clients, k.clientId)})</span>
                   <div style={{ fontSize: "0.9rem", marginTop: "0.25rem" }}>
                     <span style={casePill[k.status]}>{k.status}</span>
                     {k.courtOrAuthority ? ` · ${k.courtOrAuthority}` : ""}
-                    {k.nextDeadline ? ` · до ${k.nextDeadline}` : ""}
+                    {k.nextDeadline ? ` · до ${formatDate(k.nextDeadline)}` : ""}
                   </div>
                   {k.summary ? <p style={{ margin: "0.35rem 0 0" }}>{k.summary}</p> : null}
                 </div>
-                <select style={{ ...form.input, maxWidth: 140 }} value={k.status}
-                  onChange={(e) => onStatusChange(k.id, e.target.value as CaseStatus).catch((e) => alert(errMsg(e)))}>
-                  {caseStatuses.map((s) => <option key={s} value={s}>{s}</option>)}
-                </select>
+                <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", flexShrink: 0, flexWrap: "wrap" }}>
+                  <select style={{ ...form.input, maxWidth: 140 }} value={k.status}
+                    onChange={(e) => onStatusChange(k.id, e.target.value as CaseStatus).catch((e) => alert(errMsg(e)))}>
+                    {caseStatuses.map((s) => <option key={s} value={s}>{s}</option>)}
+                  </select>
+                  <button type="button" style={btn.danger} onClick={() => void remove(k.id)}>
+                    Удалить
+                  </button>
+                </div>
               </div>
             ))}
           </div>
@@ -636,17 +946,36 @@ function AppointmentsTab({ appointments, clients, loading, error, onRefresh, onA
 }) {
   const [clientId, setClientId] = useState("");
   const [title, setTitle] = useState("");
-  const [at, setAt] = useState("");
+  const [atDate, setAtDate] = useState("");
+  const [atTime, setAtTime] = useState("");
   const [place, setPlace] = useState("");
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
   const add = async () => {
-    if (!clientId || !title.trim() || !at) return;
-    setSaving(true); setSaveError(null);
+    setSaveError(null);
+    if (!clientId) {
+      setSaveError("Выберите клиента.");
+      return;
+    }
+    if (!title.trim()) {
+      setSaveError("Укажите тему встречи.");
+      return;
+    }
+    const dateISO = parseDateInput(atDate);
+    if (!dateISO) {
+      setSaveError("Укажите дату в формате ДД.ММ.ГГГГ.");
+      return;
+    }
+    if (atTime.length < 5) {
+      setSaveError("Укажите время встречи.");
+      return;
+    }
+    const at = `${dateISO}T${atTime}:00`;
+    setSaving(true);
     try {
       await onAdd({ clientId, title: title.trim(), at, place: place.trim() });
-      setTitle(""); setAt(""); setPlace("");
+      setTitle(""); setAtDate(""); setAtTime(""); setPlace("");
     } catch (e) { setSaveError(errMsg(e)); }
     finally { setSaving(false); }
   };
@@ -668,8 +997,18 @@ function AppointmentsTab({ appointments, clients, loading, error, onRefresh, onA
             <input style={form.input} value={title} onChange={(e) => setTitle(e.target.value)} />
           </label>
           <label style={form.label}>
-            Дата и время
-            <input type="datetime-local" style={form.input} value={at} onChange={(e) => setAt(e.target.value)} />
+            Дата
+            <input
+              style={form.input}
+              value={atDate}
+              placeholder="ДД.ММ.ГГГГ"
+              maxLength={10}
+              onChange={(e) => setAtDate(maskDateInput(e.target.value))}
+            />
+          </label>
+          <label style={form.label}>
+            Время
+            <input type="time" style={form.input} value={atTime} onChange={(e) => setAtTime(e.target.value)} />
           </label>
           <label style={form.label}>
             Место
@@ -679,7 +1018,7 @@ function AppointmentsTab({ appointments, clients, loading, error, onRefresh, onA
         {saveError && <ErrorBanner message={saveError} />}
         <button type="button"
           style={{ ...btn.primary, marginTop: "0.75rem", opacity: saving ? 0.6 : 1 }}
-          onClick={add} disabled={saving || !clientId || !title.trim() || !at}>
+          onClick={add} disabled={saving}>
           {saving ? "Сохранение…" : "Запланировать"}
         </button>
         {!clients.length && <p style={{ marginTop: "0.5rem", color: "var(--muted)", fontSize: "0.85rem" }}>Сначала добавьте клиента.</p>}
@@ -735,16 +1074,25 @@ function FinanceTab({ records, clients, cases, loading, error, onRefresh, onAdd 
   };
 
   const add = async () => {
+    setSaveError(null);
     const ae = validateAmount(amount);
-    if (ae) { setAmountError(ae); return; }
-    if (!paymentDate) return;
-    setSaving(true); setSaveError(null);
+    if (ae) {
+      setAmountError(ae);
+      setSaveError(ae);
+      return;
+    }
+    const parsedDate = parseDateInput(paymentDate);
+    if (!parsedDate) {
+      setSaveError("Укажите дату платежа в формате ДД.ММ.ГГГГ.");
+      return;
+    }
+    setSaving(true);
     try {
       await onAdd({
         recordType,
         amount: parseFloat(amount),
         currency,
-        paymentDate,
+        paymentDate: parsedDate,
         clientId: clientId || null,
         caseId: caseId || null,
         description: description.trim() || null,
@@ -787,7 +1135,13 @@ function FinanceTab({ records, clients, cases, loading, error, onRefresh, onAdd 
           </label>
           <label style={form.label}>
             Дата
-            <input type="date" style={form.input} value={paymentDate} onChange={(e) => setPaymentDate(e.target.value)} />
+            <input
+              style={form.input}
+              value={paymentDate}
+              placeholder="ДД.ММ.ГГГГ"
+              maxLength={10}
+              onChange={(e) => setPaymentDate(maskDateInput(e.target.value))}
+            />
           </label>
           <label style={form.label}>
             Клиент (необязательно)
@@ -811,7 +1165,7 @@ function FinanceTab({ records, clients, cases, loading, error, onRefresh, onAdd 
         {saveError && <ErrorBanner message={saveError} />}
         <button type="button"
           style={{ ...btn.primary, marginTop: "0.75rem", opacity: saving ? 0.6 : 1 }}
-          onClick={add} disabled={saving || !amount || !paymentDate || !!amountError}>
+          onClick={add} disabled={saving}>
           {saving ? "Сохранение…" : "Добавить запись"}
         </button>
       </section>
@@ -840,7 +1194,7 @@ function FinanceTab({ records, clients, cases, loading, error, onRefresh, onAdd 
                     <span style={financeStatusPill[r.status]}>{FINANCE_STATUS_LABEL[r.status]}</span>
                   </div>
                   <div style={{ textAlign: "right" as const, fontSize: "0.88rem", color: "var(--muted)" }}>
-                    {r.paymentDate}
+                    {formatDate(r.paymentDate)}
                     {r.clientId && <div>{clientLabel(clients, r.clientId)}</div>}
                     {r.caseId && <div>{caseLabel(cases, r.caseId)}</div>}
                     {r.description && <div>{r.description}</div>}
@@ -854,8 +1208,33 @@ function FinanceTab({ records, clients, cases, loading, error, onRefresh, onAdd 
   );
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+// ── Helpers ─────────────────────────────────────────────────────────────────--
 
+/** YYYY-MM-DD → DD.MM.YYYY */
+function formatDate(iso: string): string {
+  if (!iso) return "";
+  const parts = iso.split("-");
+  if (parts.length === 3 && parts[0].length === 4)
+    return `${parts[2]}.${parts[1]}.${parts[0]}`;
+  return iso;
+}
+
+/** Автоматически вставляет точки при вводе даты ДД.ММ.ГГГГ */
+function maskDateInput(value: string): string {
+  const digits = value.replace(/\D/g, "").slice(0, 8);
+  if (digits.length <= 2) return digits;
+  if (digits.length <= 4) return `${digits.slice(0, 2)}.${digits.slice(2)}`;
+  return `${digits.slice(0, 2)}.${digits.slice(2, 4)}.${digits.slice(4)}`;
+}
+
+/** DD.MM.YYYY → YYYY-MM-DD для бэкенда, "" если неполная */
+function parseDateInput(dmy: string): string {
+  const m = dmy.match(/^(\d{2})\.(\d{2})\.(\d{4})$/);
+  if (!m) return "";
+  return `${m[3]}-${m[2]}-${m[1]}`;
+}
+
+/** ISO datetime → локаль DD.MM.YY, время */
 function formatLocal(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
@@ -892,6 +1271,12 @@ const form = {
 const btn = {
   primary: { border: "none", background: "var(--accent)", color: "#fff", padding: "0.55rem 1rem", borderRadius: 8, fontWeight: 600, cursor: "pointer" } as const,
   danger: { border: "1px solid #fecaca", background: "#fff", color: "var(--danger)", padding: "0.35rem 0.6rem", borderRadius: 8, fontSize: "0.85rem", cursor: "pointer" } as const,
+  link: { border: "none", background: "transparent", color: "var(--accent)", fontWeight: 600, cursor: "pointer", textDecoration: "underline" } as const,
+};
+
+const modal = {
+  backdrop: { position: "fixed" as const, inset: 0, background: "rgba(0,0,0,0.45)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100, padding: "1rem" },
+  box: { background: "var(--surface)", borderRadius: "var(--radius)", padding: "1.5rem 1.75rem", maxWidth: 780, width: "100%", maxHeight: "90vh", overflowY: "auto" as const, boxShadow: "0 20px 60px rgba(0,0,0,0.25)" },
 };
 
 const casePill: Record<CaseStatus, CSSProperties> = {

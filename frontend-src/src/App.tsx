@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
-import { auth, login, validateToken, clientsApi, casesApi, eventsApi, financeApi } from "./api";
+import { auth, login, register, validateToken, clientsApi, casesApi, eventsApi, financeApi } from "./api";
 import type {
   Appointment,
   Client,
@@ -30,7 +30,7 @@ const FINANCE_STATUS_LABEL: Record<FinanceStatus, string> = {
 const PHONE_RE = /^\+?[1-9]\d{6,14}$/;
 function validatePhone(raw: string): string | null {
   const v = raw.replace(/\s/g, "");
-  if (!v) return null; // empty is OK — api.ts uses a fallback
+  if (!v) return null;
   return PHONE_RE.test(v) ? null : "Формат: +79991234567 (7–15 цифр, без пробелов)";
 }
 
@@ -38,6 +38,10 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 function validateEmail(v: string): string | null {
   if (!v.trim()) return null;
   return EMAIL_RE.test(v.trim()) ? null : "Неверный формат email (пример: name@domain.ru)";
+}
+function validateEmailRequired(raw: string): string | null {
+  if (!raw.trim()) return "Укажите email.";
+  return validateEmail(raw);
 }
 
 function clientLabel(clients: Client[], id: string | null): string {
@@ -79,17 +83,36 @@ export default function App() {
 // ── Login screen ─────────────────────────────────────────────────────────────
 
 function LoginScreen({ onSuccess }: { onSuccess: () => void }) {
-  const [email, setEmail] = useState("lawyer@example.com");
-  const [password, setPassword] = useState("Lawyer1234");
+  const [mode, setMode] = useState<"login" | "register">("login");
+  const [fullName, setFullName] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const switchMode = (next: "login" | "register") => {
+    setMode(next);
+    setError(null);
+    if (next === "login") {
+      setFullName("");
+    }
+  };
+
   const submit = async () => {
     if (!email.trim() || !password) return;
+    if (mode === "register" && !fullName.trim()) return;
+    if (mode === "register" && password.length < 6) {
+      setError("Пароль не короче 6 символов");
+      return;
+    }
     setLoading(true);
     setError(null);
     try {
-      await login(email.trim(), password);
+      if (mode === "register") {
+        await register(fullName.trim(), email.trim(), password);
+      } else {
+        await login(email.trim(), password);
+      }
       onSuccess();
     } catch (e) {
       setError(errMsg(e));
@@ -98,22 +121,41 @@ function LoginScreen({ onSuccess }: { onSuccess: () => void }) {
     }
   };
 
+  const title = mode === "login" ? "Вход" : "Регистрация";
+  const subtitle =
+    mode === "login"
+      ? "Войдите, чтобы продолжить"
+      : "Создайте аккаунт (роль по умолчанию — помощник)";
+
   return (
     <div style={loginStyle.wrap}>
       <div style={loginStyle.box}>
         <h1 style={{ margin: "0 0 0.25rem", fontSize: "1.4rem" }}>CRM адвоката</h1>
         <p style={{ margin: "0 0 1.5rem", color: "var(--muted)", fontSize: "0.9rem" }}>
-          Войдите, чтобы продолжить
+          <strong>{title}</strong>
+          {" — "}
+          {subtitle}
         </p>
-        <label style={form.label}>
+        {mode === "register" && (
+          <label style={form.label}>
+            ФИО / имя
+            <input style={form.input} type="text" value={fullName} placeholder="Иванова Мария Сергеевна"
+              autoComplete="name"
+              onChange={(e) => setFullName(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && submit()} />
+          </label>
+        )}
+        <label style={{ ...form.label, marginTop: mode === "register" ? "0.75rem" : 0 }}>
           Email
-          <input style={form.input} type="email" value={email}
+          <input style={form.input} type="email" value={email} placeholder="you@example.com"
+            autoComplete={mode === "register" ? "email" : "username"}
             onChange={(e) => setEmail(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && submit()} />
         </label>
         <label style={{ ...form.label, marginTop: "0.75rem" }}>
           Пароль
           <input style={form.input} type="password" value={password}
+            autoComplete={mode === "register" ? "new-password" : "current-password"}
             onChange={(e) => setPassword(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && submit()} />
         </label>
@@ -123,11 +165,32 @@ function LoginScreen({ onSuccess }: { onSuccess: () => void }) {
           style={{ ...btn.primary, marginTop: "1.1rem", width: "100%", opacity: loading ? 0.6 : 1 }}
           onClick={submit} disabled={loading}
         >
-          {loading ? "Вход…" : "Войти"}
+          {loading ? (mode === "login" ? "Вход…" : "Регистрация…") : mode === "login" ? "Войти" : "Зарегистрироваться"}
         </button>
-        <p style={{ marginTop: "1rem", fontSize: "0.8rem", color: "var(--muted)", textAlign: "center" }}>
-          lawyer / admin / assistant @example.com
+        <p style={{ marginTop: "1rem", fontSize: "0.85rem", color: "var(--muted)", textAlign: "center", lineHeight: 1.45 }}>
+          {mode === "login" ? (
+            <>
+              Нет аккаунта?{" "}
+              <button type="button" onClick={() => switchMode("register")}
+                style={{ ...btn.link, padding: 0, fontSize: "inherit", display: "inline" }}>
+                Регистрация
+              </button>
+            </>
+          ) : (
+            <>
+              Уже есть аккаунт?{" "}
+              <button type="button" onClick={() => switchMode("login")}
+                style={{ ...btn.link, padding: 0, fontSize: "inherit", display: "inline" }}>
+                Войти
+              </button>
+            </>
+          )}
         </p>
+        {mode === "login" && (
+          <p style={{ marginTop: "0.75rem", fontSize: "0.75rem", color: "var(--muted)", textAlign: "center" }}>
+            Тестовые учётные записи (если БД создана через seed): admin / lawyer / assistant @example.com
+          </p>
+        )}
       </div>
     </div>
   );
@@ -253,7 +316,8 @@ function MainApp({ onLogout }: { onLogout: () => void }) {
         {tab === "дела" && (
           <CasesTab cases={cases} clients={clients} loading={loadingCases} error={errorCases} onRefresh={loadCases}
             onAdd={async (c) => { await casesApi.create(c); await loadCases(); }}
-            onStatusChange={async (id, status) => { await casesApi.updateStatus(id, status); await loadCases(); }} />
+            onStatusChange={async (id, status) => { await casesApi.updateStatus(id, status); await loadCases(); }}
+            onRemove={async (id) => { await casesApi.remove(id); await loadCases(); }} />
         )}
         {tab === "встречи" && (
           <AppointmentsTab appointments={appointments} clients={clients} loading={loadingEvents} error={errorEvents} onRefresh={loadEvents}
@@ -329,6 +393,7 @@ function ClientsTab({ clients, cases, appointments, financeRecords, loading, err
   onRemove: (id: string) => Promise<void>;
 }) {
   const [name, setName] = useState("");
+  const [nameError, setNameError] = useState<string | null>(null);
   const [phone, setPhone] = useState("");
   const [phoneError, setPhoneError] = useState<string | null>(null);
   const [email, setEmail] = useState("");
@@ -341,28 +406,64 @@ function ClientsTab({ clients, cases, appointments, financeRecords, loading, err
   const handlePhoneChange = (v: string) => {
     setPhone(v);
     setPhoneError(validatePhone(v));
+    setSaveError(null);
   };
 
   const handleEmailChange = (v: string) => {
     setEmail(v);
     setEmailError(validateEmail(v));
+    setSaveError(null);
   };
 
   const add = async () => {
+    setSaveError(null);
+    setNameError(null);
+    setEmailError(null);
+    if (!name.trim()) {
+      setNameError("Укажите ФИО или название клиента.");
+      setSaveError("Укажите ФИО или название клиента.");
+      return;
+    }
+    const pDigits = phone.replace(/\s/g, "");
+    if (!pDigits) {
+      setPhoneError("Укажите телефон.");
+      setSaveError("Укажите телефон.");
+      return;
+    }
     const pe = validatePhone(phone);
-    if (pe) { setPhoneError(pe); return; }
-    if (!name.trim()) return;
-    setSaving(true); setSaveError(null);
+    if (pe) {
+      setPhoneError(pe);
+      setSaveError(pe);
+      return;
+    }
+    const ee = validateEmailRequired(email);
+    if (ee) {
+      setEmailError(ee);
+      setSaveError(ee);
+      return;
+    }
+    setSaving(true);
     try {
       await onAdd({ name: name.trim(), phone, email, notes });
-      setName(""); setPhone(""); setPhoneError(null); setEmail(""); setEmailError(null); setNotes("");
+      setName("");
+      setNameError(null);
+      setPhone("");
+      setPhoneError(null);
+      setEmail("");
+      setEmailError(null);
+      setNotes("");
     } catch (e) { setSaveError(errMsg(e)); }
     finally { setSaving(false); }
   };
 
   const remove = async (id: string) => {
     if (!confirm("Удалить клиента?")) return;
-    try { await onRemove(id); } catch (e) { alert(errMsg(e)); }
+    try {
+      await onRemove(id);
+      setSelectedId((cur) => (cur === id ? null : cur));
+    } catch (e) {
+      alert(errMsg(e));
+    }
   };
 
   return (
@@ -372,7 +473,16 @@ function ClientsTab({ clients, cases, appointments, financeRecords, loading, err
         <div style={form.grid}>
           <label style={form.label}>
             ФИО
-            <input style={form.input} value={name} onChange={(e) => setName(e.target.value)} />
+            <input
+              style={{ ...form.input, borderColor: nameError ? "var(--danger)" : undefined }}
+              value={name}
+              onChange={(e) => {
+                setName(e.target.value);
+                setNameError(null);
+                setSaveError(null);
+              }}
+            />
+            <FieldError msg={nameError} />
           </label>
           <label style={form.label}>
             Телефон
@@ -398,7 +508,7 @@ function ClientsTab({ clients, cases, appointments, financeRecords, loading, err
         {saveError && <ErrorBanner message={saveError} />}
         <button type="button"
           style={{ ...btn.primary, marginTop: "0.75rem", opacity: saving ? 0.6 : 1 }}
-          onClick={add} disabled={saving || !name.trim() || !!phoneError || !!emailError}>
+          onClick={add} disabled={saving}>
           {saving ? "Сохранение…" : "Добавить клиента"}
         </button>
       </section>
@@ -413,17 +523,31 @@ function ClientsTab({ clients, cases, appointments, financeRecords, loading, err
             {clients.map((c) => (
               <div
                 key={c.id}
-                onClick={() => setSelectedId(c.id === selectedId ? null : c.id)}
                 style={{
                   ...card.listItem,
-                  cursor: "pointer",
+                  alignItems: "center",
                   borderRadius: 8,
                   padding: "0.75rem 0.6rem",
                   background: selectedId === c.id ? "var(--accent-soft)" : undefined,
                   transition: "background 0.15s",
                 }}
               >
-                <div>
+                <div
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => setSelectedId(c.id === selectedId ? null : c.id)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      setSelectedId(c.id === selectedId ? null : c.id);
+                    }
+                  }}
+                  style={{
+                    cursor: "pointer",
+                    flex: "1 1 auto",
+                    minWidth: 0,
+                  }}
+                >
                   <strong>{c.name}</strong>
                   <div style={{ color: "var(--muted)", fontSize: "0.9rem" }}>
                     {[c.phone, c.email].filter(Boolean).join(" · ") || "—"}
@@ -432,8 +556,8 @@ function ClientsTab({ clients, cases, appointments, financeRecords, loading, err
                 </div>
                 <button
                   type="button"
-                  style={btn.danger}
-                  onClick={(e) => { e.stopPropagation(); remove(c.id); }}
+                  style={{ ...btn.danger, flexShrink: 0 }}
+                  onClick={() => void remove(c.id)}
                 >
                   Удалить
                 </button>
@@ -454,6 +578,7 @@ function ClientsTab({ clients, cases, appointments, financeRecords, loading, err
               appointments={appointments.filter((a) => a.clientId === selectedId)}
               financeRecords={financeRecords.filter((f) => f.clientId === selectedId)}
               onClose={() => setSelectedId(null)}
+              onDelete={() => void remove(client.id)}
             />
           </Modal>
         );
@@ -464,12 +589,13 @@ function ClientsTab({ clients, cases, appointments, financeRecords, loading, err
 
 // ── Client detail panel ───────────────────────────────────────────────────────
 
-function ClientDetail({ client, cases, appointments, financeRecords, onClose }: {
+function ClientDetail({ client, cases, appointments, financeRecords, onClose, onDelete }: {
   client: Client;
   cases: LegalCase[];
   appointments: Appointment[];
   financeRecords: FinanceRecord[];
   onClose: () => void;
+  onDelete?: () => void;
 }) {
   const balance = financeRecords
     .filter((r) => r.status !== "cancelled")
@@ -561,17 +687,25 @@ function ClientDetail({ client, cases, appointments, financeRecords, onClose }: 
           }
         </div>
       </div>
+      {onDelete ? (
+        <div style={{ marginTop: "1.25rem", paddingTop: "1rem", borderTop: "1px solid var(--border)" }}>
+          <button type="button" style={btn.danger} onClick={onDelete}>
+            Удалить клиента
+          </button>
+        </div>
+      ) : null}
     </section>
   );
 }
 
 // ── Cases tab ─────────────────────────────────────────────────────────────────
 
-function CasesTab({ cases, clients, loading, error, onRefresh, onAdd, onStatusChange }: {
+function CasesTab({ cases, clients, loading, error, onRefresh, onAdd, onStatusChange, onRemove }: {
   cases: LegalCase[]; clients: Client[];
   loading: boolean; error: string | null; onRefresh: () => void;
   onAdd: (c: Omit<LegalCase, "id">) => Promise<void>;
   onStatusChange: (id: string, status: CaseStatus) => Promise<void>;
+  onRemove: (id: string) => Promise<void>;
 }) {
   const [clientId, setClientId] = useState("");
   const [title, setTitle] = useState("");
@@ -583,13 +717,30 @@ function CasesTab({ cases, clients, loading, error, onRefresh, onAdd, onStatusCh
   const [saveError, setSaveError] = useState<string | null>(null);
 
   const add = async () => {
-    if (!clientId || !title.trim()) return;
-    setSaving(true); setSaveError(null);
+    setSaveError(null);
+    if (!clientId) {
+      setSaveError("Выберите клиента.");
+      return;
+    }
+    if (!title.trim()) {
+      setSaveError("Укажите название или номер дела.");
+      return;
+    }
+    setSaving(true);
     try {
       await onAdd({ clientId, title: title.trim(), courtOrAuthority: court.trim(), status, nextDeadline: parseDateInput(deadline), summary: summary.trim() });
       setTitle(""); setCourt(""); setDeadline(""); setSummary("");
     } catch (e) { setSaveError(errMsg(e)); }
     finally { setSaving(false); }
+  };
+
+  const remove = async (id: string) => {
+    if (!confirm("Удалить это дело? Будут удалены связанные задачи, встречи по делу, документы и финансовые строки.")) return;
+    try {
+      await onRemove(id);
+    } catch (e) {
+      alert(errMsg(e));
+    }
   };
 
   return (
@@ -636,7 +787,7 @@ function CasesTab({ cases, clients, loading, error, onRefresh, onAdd, onStatusCh
         {saveError && <ErrorBanner message={saveError} />}
         <button type="button"
           style={{ ...btn.primary, marginTop: "0.75rem", opacity: saving ? 0.6 : 1 }}
-          onClick={add} disabled={saving || !clientId || !title.trim()}>
+          onClick={add} disabled={saving}>
           {saving ? "Сохранение…" : "Добавить дело"}
         </button>
         {!clients.length && <p style={{ marginTop: "0.5rem", color: "var(--muted)", fontSize: "0.85rem" }}>Сначала добавьте клиента.</p>}
@@ -650,8 +801,8 @@ function CasesTab({ cases, clients, loading, error, onRefresh, onAdd, onStatusCh
         {!loading && cases.length > 0 && (
           <div style={{ display: "grid", gap: "0.75rem" }}>
             {cases.map((k) => (
-              <div key={k.id} style={card.listItem}>
-                <div>
+              <div key={k.id} style={{ ...card.listItem, alignItems: "center" }}>
+                <div style={{ flex: "1 1 auto", minWidth: 0 }}>
                   <strong>{k.title}</strong>{" "}
                   <span style={{ color: "var(--muted)" }}>({clientLabel(clients, k.clientId)})</span>
                   <div style={{ fontSize: "0.9rem", marginTop: "0.25rem" }}>
@@ -661,10 +812,15 @@ function CasesTab({ cases, clients, loading, error, onRefresh, onAdd, onStatusCh
                   </div>
                   {k.summary ? <p style={{ margin: "0.35rem 0 0" }}>{k.summary}</p> : null}
                 </div>
-                <select style={{ ...form.input, maxWidth: 140 }} value={k.status}
-                  onChange={(e) => onStatusChange(k.id, e.target.value as CaseStatus).catch((e) => alert(errMsg(e)))}>
-                  {caseStatuses.map((s) => <option key={s} value={s}>{s}</option>)}
-                </select>
+                <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", flexShrink: 0, flexWrap: "wrap" }}>
+                  <select style={{ ...form.input, maxWidth: 140 }} value={k.status}
+                    onChange={(e) => onStatusChange(k.id, e.target.value as CaseStatus).catch((e) => alert(errMsg(e)))}>
+                    {caseStatuses.map((s) => <option key={s} value={s}>{s}</option>)}
+                  </select>
+                  <button type="button" style={btn.danger} onClick={() => void remove(k.id)}>
+                    Удалить
+                  </button>
+                </div>
               </div>
             ))}
           </div>
@@ -690,10 +846,26 @@ function AppointmentsTab({ appointments, clients, loading, error, onRefresh, onA
   const [saveError, setSaveError] = useState<string | null>(null);
 
   const add = async () => {
+    setSaveError(null);
+    if (!clientId) {
+      setSaveError("Выберите клиента.");
+      return;
+    }
+    if (!title.trim()) {
+      setSaveError("Укажите тему встречи.");
+      return;
+    }
     const dateISO = parseDateInput(atDate);
-    if (!clientId || !title.trim() || !dateISO || atTime.length < 5) return;
+    if (!dateISO) {
+      setSaveError("Укажите дату в формате ДД.ММ.ГГГГ.");
+      return;
+    }
+    if (atTime.length < 5) {
+      setSaveError("Укажите время встречи.");
+      return;
+    }
     const at = `${dateISO}T${atTime}:00`;
-    setSaving(true); setSaveError(null);
+    setSaving(true);
     try {
       await onAdd({ clientId, title: title.trim(), at, place: place.trim() });
       setTitle(""); setAtDate(""); setAtTime(""); setPlace("");
@@ -739,7 +911,7 @@ function AppointmentsTab({ appointments, clients, loading, error, onRefresh, onA
         {saveError && <ErrorBanner message={saveError} />}
         <button type="button"
           style={{ ...btn.primary, marginTop: "0.75rem", opacity: saving ? 0.6 : 1 }}
-          onClick={add} disabled={saving || !clientId || !title.trim() || atDate.length !== 10 || atTime.length < 5}>
+          onClick={add} disabled={saving}>
           {saving ? "Сохранение…" : "Запланировать"}
         </button>
         {!clients.length && <p style={{ marginTop: "0.5rem", color: "var(--muted)", fontSize: "0.85rem" }}>Сначала добавьте клиента.</p>}
@@ -795,11 +967,19 @@ function FinanceTab({ records, clients, cases, loading, error, onRefresh, onAdd 
   };
 
   const add = async () => {
+    setSaveError(null);
     const ae = validateAmount(amount);
-    if (ae) { setAmountError(ae); return; }
+    if (ae) {
+      setAmountError(ae);
+      setSaveError(ae);
+      return;
+    }
     const parsedDate = parseDateInput(paymentDate);
-    if (!parsedDate) return;
-    setSaving(true); setSaveError(null);
+    if (!parsedDate) {
+      setSaveError("Укажите дату платежа в формате ДД.ММ.ГГГГ.");
+      return;
+    }
+    setSaving(true);
     try {
       await onAdd({
         recordType,
@@ -878,7 +1058,7 @@ function FinanceTab({ records, clients, cases, loading, error, onRefresh, onAdd 
         {saveError && <ErrorBanner message={saveError} />}
         <button type="button"
           style={{ ...btn.primary, marginTop: "0.75rem", opacity: saving ? 0.6 : 1 }}
-          onClick={add} disabled={saving || !amount || paymentDate.length !== 10 || !!amountError}>
+          onClick={add} disabled={saving}>
           {saving ? "Сохранение…" : "Добавить запись"}
         </button>
       </section>
@@ -984,6 +1164,7 @@ const form = {
 const btn = {
   primary: { border: "none", background: "var(--accent)", color: "#fff", padding: "0.55rem 1rem", borderRadius: 8, fontWeight: 600, cursor: "pointer" } as const,
   danger: { border: "1px solid #fecaca", background: "#fff", color: "var(--danger)", padding: "0.35rem 0.6rem", borderRadius: 8, fontSize: "0.85rem", cursor: "pointer" } as const,
+  link: { border: "none", background: "transparent", color: "var(--accent)", fontWeight: 600, cursor: "pointer", textDecoration: "underline" } as const,
 };
 
 const casePill: Record<CaseStatus, CSSProperties> = {

@@ -1,10 +1,21 @@
 import uuid
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Query
 
-from schemas.finance import FinanceRecordCreate, FinanceRecordUpdate, FinanceRecordOut
+from schemas.finance import (
+    FinanceRecordCreate,
+    FinanceRecordUpdate,
+    FinanceRecordOut,
+    RecordType,
+    PaymentStatus,
+)
 from core.rbac import require_role
+from core.row_access import (
+    assistant_finance_scope,
+    ensure_assistant_finance_mutation,
+    ensure_assistant_readable_finance,
+)
 from storage.database import get_db, row_to_dict, _now
 
 router = APIRouter()
@@ -20,14 +31,14 @@ def create_finance_record(
             "SELECT 1 FROM clients WHERE id = ?", (body.client_id,)
         ).fetchone():
             raise HTTPException(
-                status_code=422,
+                status_code=400,
                 detail={"code": "INVALID_REFERENCE", "message": f"Client '{body.client_id}' not found"},
             )
         if body.case_id and not conn.execute(
             "SELECT 1 FROM legal_cases WHERE id = ?", (body.case_id,)
         ).fetchone():
             raise HTTPException(
-                status_code=422,
+                status_code=400,
                 detail={"code": "INVALID_REFERENCE", "message": f"Case '{body.case_id}' not found"},
             )
         fid = str(uuid.uuid4())
@@ -46,20 +57,25 @@ def create_finance_record(
 
 @router.get("", response_model=list[FinanceRecordOut], summary="List finance records")
 def list_finance_records(
-    record_type: Optional[str] = None,
-    status: Optional[str] = None,
+    record_type: Optional[RecordType] = Query(None),
+    status: Optional[PaymentStatus] = Query(None),
     client_id: Optional[str] = None,
     case_id: Optional[str] = None,
     current_user: dict = Depends(require_role("finance_records", "read")),
 ):
     query = "SELECT * FROM finance_records WHERE 1=1"
     params: list = []
+    if current_user["role"] == "assistant":
+        scope, plist = assistant_finance_scope(current_user["id"])
+        query += f" AND ({scope})"
+        params.extend(plist)
+
     if record_type:
         query += " AND record_type = ?"
-        params.append(record_type)
+        params.append(record_type.value)
     if status:
         query += " AND status = ?"
-        params.append(status)
+        params.append(status.value)
     if client_id:
         query += " AND client_id = ?"
         params.append(client_id)
@@ -78,9 +94,10 @@ def get_finance_record(
 ):
     with get_db() as conn:
         row = conn.execute("SELECT * FROM finance_records WHERE id = ?", (record_id,)).fetchone()
-    if not row:
-        raise HTTPException(status_code=404, detail={"code": "NOT_FOUND", "message": "Finance record not found"})
-    return row_to_dict(row)
+        if not row:
+            raise HTTPException(status_code=404, detail={"code": "NOT_FOUND", "message": "Finance record not found"})
+        ensure_assistant_readable_finance(conn, record_id, current_user)
+        return row_to_dict(row)
 
 
 @router.patch("/{record_id}", response_model=FinanceRecordOut, summary="Update finance record")
@@ -90,8 +107,11 @@ def update_finance_record(
     current_user: dict = Depends(require_role("finance_records", "update")),
 ):
     with get_db() as conn:
-        if not conn.execute("SELECT 1 FROM finance_records WHERE id = ?", (record_id,)).fetchone():
+        row0 = conn.execute("SELECT * FROM finance_records WHERE id = ?", (record_id,)).fetchone()
+        if not row0:
             raise HTTPException(status_code=404, detail={"code": "NOT_FOUND", "message": "Finance record not found"})
+        ensure_assistant_readable_finance(conn, record_id, current_user)
+        ensure_assistant_finance_mutation(conn, row_to_dict(row0), current_user)
         data = body.model_dump(mode="json", exclude_none=True)
         if data:
             sets = ", ".join(f"{k} = ?" for k in data)
@@ -106,6 +126,9 @@ def delete_finance_record(
     current_user: dict = Depends(require_role("finance_records", "delete")),
 ):
     with get_db() as conn:
-        if not conn.execute("SELECT 1 FROM finance_records WHERE id = ?", (record_id,)).fetchone():
+        row0 = conn.execute("SELECT * FROM finance_records WHERE id = ?", (record_id,)).fetchone()
+        if not row0:
             raise HTTPException(status_code=404, detail={"code": "NOT_FOUND", "message": "Finance record not found"})
+        ensure_assistant_readable_finance(conn, record_id, current_user)
+        ensure_assistant_finance_mutation(conn, row_to_dict(row0), current_user)
         conn.execute("DELETE FROM finance_records WHERE id = ?", (record_id,))

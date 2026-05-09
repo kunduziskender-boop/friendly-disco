@@ -47,7 +47,13 @@ def get_user(
     current_user: dict = Depends(require_role("users", "read")),
 ):
     if current_user["role"] != "admin" and current_user["id"] != user_id:
-        raise HTTPException(status_code=403, detail={"code": "FORBIDDEN", "message": "Access denied"})
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "code": "FORBIDDEN",
+                "message": "Доступ запрещён: можно смотреть только свой профиль (или войдите как администратор).",
+            },
+        )
     with get_db() as conn:
         row = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
     if not row:
@@ -62,7 +68,13 @@ def update_user(
     current_user: dict = Depends(require_role("users", "update")),
 ):
     if current_user["role"] != "admin" and current_user["id"] != user_id:
-        raise HTTPException(status_code=403, detail={"code": "FORBIDDEN", "message": "Access denied"})
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "code": "FORBIDDEN",
+                "message": "Доступ запрещён: можно изменять только свой профиль (или войдите как администратор).",
+            },
+        )
     with get_db() as conn:
         if not conn.execute("SELECT 1 FROM users WHERE id = ?", (user_id,)).fetchone():
             raise HTTPException(status_code=404, detail={"code": "NOT_FOUND", "message": "User not found"})

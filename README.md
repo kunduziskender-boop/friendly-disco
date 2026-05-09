@@ -1,6 +1,6 @@
 # friendly-disco — CRM для адвоката
 
-Полный стек: **фронтенд** (React + Vite) и **бэкенд** (FastAPI) для учёта клиентов, дел, встреч и финансов. Данные на бэкенде хранятся **в памяти** (демо, без БД). Фронтенд по умолчанию обращается к API: `http://localhost:8000`.
+Полный стек: **фронтенд** (React + Vite) и **бэкенд** (FastAPI) для учёта клиентов, дел, встреч и финансов. Данные на бэкенде — **SQLite** (файл по умолчанию `backend/crm.db`). REST-эндпоинты с префиксом **`/api`** (например `POST /api/auth/login`, `POST /api/auth/register`); для всех путей под `/api/*`, кроме регистрации и входа, нужен заголовок **`Authorization: Bearer <JWT>`** (проверка и в middleware, и в зависимостях).
 
 Репозиторий: [kunduziskender-boop/friendly-disco](https://github.com/kunduziskender-boop/friendly-disco)
 
@@ -15,10 +15,10 @@ python -m venv venv
 # Unix:    source venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env   # при необходимости отредактируйте SECRET_KEY
-uvicorn main:app --reload --port 8000
+uvicorn main:app --reload --host 127.0.0.1 --port 8010
 ```
 
-Swagger: http://localhost:8000/docs
+Swagger: http://127.0.0.1:8010/docs (authorize через Bearer token, выданный `POST /api/auth/login`).
 
 Тестовые пользователи (seed):
 
@@ -35,7 +35,20 @@ npm install
 npm run dev
 ```
 
-Откройте http://localhost:5173 и войдите под одним из аккаунтов выше.
+Откройте http://localhost:5173 (или следующий свободный порт — см. терминал) и войдите или зарегистрируйтесь на экране входа.
+
+При `npm run dev` запросы к API идут на **`/api`** через прокси Vite на **`http://127.0.0.1:8010`** (`vite.config.ts`). Бэкенд по умолчанию поднимается на **8010** (команда `run-dev.ps1`), чтобы не конфликтовать со старым процессом на **8000**. Должны быть эндпоинты **`/api/...`**, в т.ч. **`POST /api/auth/register`**.
+
+**Если вход/регистрация дают 404 («Not Found»):** почти всегда на порту **8000** всё ещё крутится **старый процесс uvicorn** (без `/api` и без регистрации). Остановите его и запустите снова из каталога `backend`:
+
+```powershell
+cd backend
+.\run-dev.ps1
+```
+
+или вручную: `python -m uvicorn main:app --reload --host 127.0.0.1 --port 8010`. В Swagger (**http://127.0.0.1:8010/docs**) должны быть маршруты **`/api/auth/register`**. Порт можно сменить: `$env:CRM_BACKEND_PORT=8000; .\run-dev.ps1` и тогда в `vite.config.ts` верните `target` прокси на этот порт.
+
+Настройка адреса API на фронте (файл **`.env`**, см. `.env.example`): **`VITE_API_ROOT=http://127.0.0.1:8010/api`** (или ваш порт).
 
 ## Сборка фронта для продакшена
 

@@ -640,6 +640,7 @@
 
 <script>
 const BASE = 'http://localhost:8000';
+const API = BASE + '/api';
 let token = localStorage.getItem('crm_token') || '';
 
 // ── helpers ──────────────────────────────────────────────────────
@@ -702,7 +703,7 @@ async function req(method, path, body) {
   const headers = { 'Content-Type': 'application/json' };
   if (token) headers['Authorization'] = 'Bearer ' + token;
   try {
-    const res = await fetch(BASE + path, {
+    const res = await fetch(API + path, {
       method,
       headers,
       body: body ? JSON.stringify(body) : undefined,

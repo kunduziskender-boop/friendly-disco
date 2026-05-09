@@ -19,6 +19,14 @@ class ClientCreate(BaseModel):
     client_type: ClientType
     notes: Optional[str] = None
 
+    @field_validator("name")
+    @classmethod
+    def name_non_empty(cls, v: str) -> str:
+        s = v.strip()
+        if not s:
+            raise ValueError("Name must not be empty")
+        return s
+
     @field_validator("phone")
     @classmethod
     def validate_phone(cls, v: str) -> str:
@@ -33,6 +41,13 @@ class ClientUpdate(BaseModel):
     email: Optional[CrmEmail] = None
     client_type: Optional[ClientType] = None
     notes: Optional[str] = None
+
+    @field_validator("name")
+    @classmethod
+    def name_not_blank(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and not v.strip():
+            raise ValueError("Name must not be empty")
+        return v.strip() if v is not None else None
 
     @field_validator("phone")
     @classmethod

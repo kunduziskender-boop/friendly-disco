@@ -43,6 +43,15 @@ class TaskUpdate(BaseModel):
     assignee_user_id: Optional[str] = None
     completed_at: Optional[datetime] = None
 
+    @field_validator("due_date", "completed_at", mode="before")
+    @classmethod
+    def parse_optional_dt(cls, v):
+        if v is None or isinstance(v, datetime):
+            return v
+        if isinstance(v, str):
+            return datetime.fromisoformat(v)
+        return v
+
 
 class TaskOut(BaseModel):
     id: str

@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 from enum import Enum
 from typing import Optional
 
@@ -11,10 +11,10 @@ class CaseStatus(str, Enum):
 
 
 class CaseCreate(BaseModel):
-    case_number: str
-    title: str
+    case_number: str = Field(..., min_length=1)
+    title: str = Field(..., min_length=1)
     description: Optional[str] = None
-    client_id: str
+    client_id: str = Field(..., min_length=1)
     responsible_lawyer_id: Optional[str] = None
     status: CaseStatus = CaseStatus.open
     court_name: Optional[str] = None
@@ -33,6 +33,13 @@ class CaseUpdate(BaseModel):
     next_hearing_date: Optional[str] = None
     opposing_party: Optional[str] = None
     case_summary: Optional[str] = None
+
+    @field_validator("title")
+    @classmethod
+    def title_not_blank(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and not v.strip():
+            raise ValueError("Title must not be empty")
+        return v
 
 
 class CaseOut(BaseModel):

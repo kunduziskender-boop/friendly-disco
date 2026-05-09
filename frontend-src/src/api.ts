@@ -18,7 +18,21 @@ import type {
   LegalCase,
 } from "./types";
 
-const BASE = "http://localhost:8000";
+function computeApiRoot(): string {
+  const root = import.meta.env.VITE_API_ROOT?.trim();
+  if (root) return root.replace(/\/+$/, "");
+
+  const base = import.meta.env.VITE_API_BASE?.trim();
+  if (base) {
+    const b = base.replace(/\/+$/, "");
+    return import.meta.env.VITE_API_LEGACY === "true" ? b : `${b}/api`;
+  }
+
+  if (import.meta.env.DEV) return "/api";
+  return "http://127.0.0.1:8010/api";
+}
+
+const API = computeApiRoot();
 
 // ── Token ────────────────────────────────────────────────────────────────────
 
@@ -50,6 +64,22 @@ export class ApiError extends Error {
 
 // ── Base request ─────────────────────────────────────────────────────────────
 
+function formatHttpError(status: number, data: unknown): string {
+  if (data && typeof data === "object" && "message" in data) {
+    const m = (data as { message: unknown }).message;
+    if (typeof m === "string" && m) return m;
+  }
+  if (Array.isArray((data as { detail?: unknown })?.detail)) {
+    return ((data as { detail: { msg: string }[] }).detail).map((d) => d.msg).join("; ");
+  }
+  const d = (data as { detail?: { message?: string } | string } | null)?.detail;
+  if (typeof d === "string") return d;
+  if (d && typeof d === "object" && "message" in d && typeof (d as { message: string }).message === "string") {
+    return (d as { message: string }).message;
+  }
+  return `Ошибка ${status}`;
+}
+
 async function req<T>(
   method: string,
   path: string,
@@ -60,24 +90,33 @@ async function req<T>(
   };
   if (_token) headers.Authorization = `Bearer ${_token}`;
 
-  const res = await fetch(BASE + path, {
-    method,
-    headers,
-    body: body !== undefined ? JSON.stringify(body) : undefined,
-  });
+  const url = API + path;
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method,
+      headers,
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    });
+  } catch (e) {
+    const hint =
+      import.meta.env.DEV && API.startsWith("/api")
+        ? " Проверьте, что бэкенд запущен (по умолчанию порт 8010, см. vite.config.ts) и прокси Vite включён."
+        : " Проверьте адрес API (VITE_API_ROOT / VITE_API_BASE) и что сервер запущен.";
+    throw new ApiError(
+      0,
+      e instanceof Error ? `${e.message}.${hint}` : `Сеть недоступна.${hint}`
+    );
+  }
 
   if (res.status === 204) return undefined as T;
 
   const data = await res.json().catch(() => null);
 
   if (!res.ok) {
-    let msg: string;
-    if (Array.isArray(data?.detail)) {
-      msg = (data.detail as { msg: string }[]).map((d) => d.msg).join("; ");
-    } else {
-      msg =
-        (data?.detail as { message?: string } | null)?.message ??
-        String(data?.detail ?? `Ошибка ${res.status}`);
+    let msg = formatHttpError(res.status, data);
+    if (res.status === 404) {
+      msg += ` (${method} ${url}). Частая причина: старая версия API без префикса /api или без регистрации — перезапустите uvicorn из папки backend актуального кода (нужны POST /api/auth/register и /api/auth/login).`;
     }
     throw new ApiError(res.status, msg);
   }
@@ -89,6 +128,19 @@ async function req<T>(
 
 export async function login(email: string, password: string): Promise<void> {
   const data = await req<{ access_token: string }>("POST", "/auth/login", {
+    email,
+    password,
+  });
+  auth.set(data.access_token);
+}
+
+export async function register(
+  fullName: string,
+  email: string,
+  password: string
+): Promise<void> {
+  const data = await req<{ access_token: string }>("POST", "/auth/register", {
+    full_name: fullName,
     email,
     password,
   });
@@ -283,6 +335,10 @@ export const casesApi = {
         description: JSON.stringify({ fs: status } satisfies CaseMeta),
       })
     );
+  },
+
+  async remove(id: string): Promise<void> {
+    await req<void>("DELETE", `/cases/${id}`);
   },
 };
 

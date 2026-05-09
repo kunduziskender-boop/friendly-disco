@@ -16,6 +16,14 @@ class UserCreate(BaseModel):
     password: str
     role: UserRole = UserRole.lawyer
 
+    @field_validator("full_name")
+    @classmethod
+    def full_name_strip_non_empty(cls, v: str) -> str:
+        s = v.strip()
+        if not s:
+            raise ValueError("Full name must not be empty")
+        return s
+
     @field_validator("password")
     @classmethod
     def password_min_length(cls, v: str) -> str:
@@ -29,6 +37,16 @@ class UserUpdate(BaseModel):
     email: Optional[CrmEmail] = None
     password: Optional[str] = None
     is_active: Optional[bool] = None
+
+    @field_validator("full_name")
+    @classmethod
+    def full_name_strip_if_given(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        s = v.strip()
+        if not s:
+            raise ValueError("Full name must not be empty")
+        return s
 
     @field_validator("password")
     @classmethod

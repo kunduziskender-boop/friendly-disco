@@ -18,7 +18,28 @@ import type {
   LegalCase,
 } from "./types";
 
-const BASE = "http://localhost:8000";
+/**
+ * База для всех путей вида `/clients`, `/auth/login` (без завершающего `/`).
+ *
+ * - `VITE_API_ROOT` — приоритет: полный префикс (`http://127.0.0.1:8000/api` или для старого бэкенда `http://127.0.0.1:8000`).
+ * - иначе `VITE_API_BASE` + `/api`, кроме `VITE_API_LEGACY=true` (старый бэкенд без `/api`).
+ * - в `npm run dev`: по умолчанию `/api` (прокси в vite.config.ts → 127.0.0.1:8000).
+ */
+function computeApiRoot(): string {
+  const root = import.meta.env.VITE_API_ROOT?.trim();
+  if (root) return root.replace(/\/+$/, "");
+
+  const base = import.meta.env.VITE_API_BASE?.trim();
+  if (base) {
+    const b = base.replace(/\/+$/, "");
+    return import.meta.env.VITE_API_LEGACY === "true" ? b : `${b}/api`;
+  }
+
+  if (import.meta.env.DEV) return "/api";
+  return "http://127.0.0.1:8010/api";
+}
+
+const API = computeApiRoot();
 
 // ── Token ────────────────────────────────────────────────────────────────────
 
@@ -48,7 +69,26 @@ export class ApiError extends Error {
   }
 }
 
+/** Сбрасывает сессию при 401 на защищённых запросах; слушатель — в `App.tsx`. */
+export const AUTH_EXPIRED_EVENT = "crm-auth-expired";
+
 // ── Base request ─────────────────────────────────────────────────────────────
+
+function formatHttpError(status: number, data: unknown): string {
+  if (data && typeof data === "object" && "message" in data) {
+    const m = (data as { message: unknown }).message;
+    if (typeof m === "string" && m) return m;
+  }
+  if (Array.isArray((data as { detail?: unknown })?.detail)) {
+    return ((data as { detail: { msg: string }[] }).detail).map((d) => d.msg).join("; ");
+  }
+  const d = (data as { detail?: { message?: string } | string } | null)?.detail;
+  if (typeof d === "string") return d;
+  if (d && typeof d === "object" && "message" in d && typeof (d as { message: string }).message === "string") {
+    return (d as { message: string }).message;
+  }
+  return `Ошибка ${status}`;
+}
 
 async function req<T>(
   method: string,
@@ -58,26 +98,42 @@ async function req<T>(
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
   };
+  const hadToken = !!_token;
   if (_token) headers.Authorization = `Bearer ${_token}`;
 
-  const res = await fetch(BASE + path, {
-    method,
-    headers,
-    body: body !== undefined ? JSON.stringify(body) : undefined,
-  });
+  const url = API + path;
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method,
+      headers,
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    });
+  } catch (e) {
+    const hint =
+      import.meta.env.DEV && API.startsWith("/api")
+        ? " Проверьте, что бэкенд запущен (по умолчанию порт 8010, см. vite.config.ts) и прокси Vite включён."
+        : " Проверьте адрес API (VITE_API_ROOT / VITE_API_BASE) и что сервер запущен.";
+    throw new ApiError(
+      0,
+      e instanceof Error ? `${e.message}.${hint}` : `Сеть недоступна.${hint}`
+    );
+  }
 
   if (res.status === 204) return undefined as T;
 
   const data = await res.json().catch(() => null);
 
   if (!res.ok) {
-    let msg: string;
-    if (Array.isArray(data?.detail)) {
-      msg = (data.detail as { msg: string }[]).map((d) => d.msg).join("; ");
-    } else {
-      msg =
-        (data?.detail as { message?: string } | null)?.message ??
-        String(data?.detail ?? `Ошибка ${res.status}`);
+    if (res.status === 401 && hadToken) {
+      auth.clear();
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(new Event(AUTH_EXPIRED_EVENT));
+      }
+    }
+    let msg = formatHttpError(res.status, data);
+    if (res.status === 404) {
+      msg += ` (${method} ${url}). Частая причина: запущена старая версия API без префикса /api или без эндпоинта регистрации — остановите uvicorn на :8000 и запустите из папки backend актуальный проект (с POST /api/auth/register).`;
     }
     throw new ApiError(res.status, msg);
   }
@@ -93,6 +149,64 @@ export async function login(email: string, password: string): Promise<void> {
     password,
   });
   auth.set(data.access_token);
+}
+
+export async function register(
+  fullName: string,
+  email: string,
+  password: string
+): Promise<void> {
+  const data = await req<{ access_token: string }>("POST", "/auth/register", {
+    full_name: fullName,
+    email,
+    password,
+  });
+  auth.set(data.access_token);
+}
+
+export type MeRole = "admin" | "lawyer" | "assistant";
+
+/** Ответ GET /auth/me после входа */
+export interface MeUser {
+  id: string;
+  full_name: string;
+  email: string;
+  role: MeRole;
+  is_active: boolean;
+  created_at: string;
+}
+
+/** Текущий пользователь из JWT (понятно после входа, кто вы и с какой ролью). */
+export async function fetchMe(): Promise<MeUser> {
+  return req<MeUser>("GET", "/auth/me");
+}
+
+/** Короткая подпись роли для UI */
+export function roleTitleRu(role: string): string {
+  switch (role) {
+    case "admin":
+      return "Администратор";
+    case "lawyer":
+      return "Юрист";
+    case "assistant":
+      return "Помощник";
+    default:
+      return role;
+  }
+}
+
+/** Одна строка-пояснение возможностей (для заголовка / экрана входа) */
+export function roleHintRu(role: string): string {
+  switch (role) {
+    case "admin":
+      return "Полный доступ, управление пользователями и всеми данными.";
+    case "lawyer":
+      return "Все клиенты и дела, финансы, расширенные права в CRM.";
+    case "assistant":
+      return "Свои клиенты и связанные записи; удаление своих клиентов без привязанных дел.";
+    default:
+      return "";
+  }
 }
 
 // ── Backend response shapes ───────────────────────────────────────────────────
@@ -276,6 +390,10 @@ export const casesApi = {
         description,
       })
     );
+  },
+
+  async remove(id: string): Promise<void> {
+    await req<void>("DELETE", `/cases/${id}`);
   },
 };
 

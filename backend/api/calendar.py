@@ -1,10 +1,18 @@
 import uuid
+from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Query
 
-from schemas.calendar_events import CalendarEventCreate, CalendarEventUpdate, CalendarEventOut
+from schemas.calendar_events import CalendarEventCreate, CalendarEventUpdate, CalendarEventOut, EventType
 from core.rbac import require_role
+from core.row_access import (
+    assistant_calendar_scope,
+    ensure_assistant_calendar_mutation,
+    ensure_assistant_case,
+    ensure_assistant_owns_client,
+    ensure_assistant_readable_calendar,
+)
 from storage.database import get_db, row_to_dict
 
 router = APIRouter()
@@ -27,6 +35,14 @@ def _set_participants(conn, event_id: str, user_ids: list[str]) -> None:
             )
 
 
+def _parse_iso_dt(raw: object) -> datetime:
+    """Parse DB or JSON datetime (ISO format, optional Z suffix)."""
+    if isinstance(raw, datetime):
+        return raw
+    s = str(raw).strip().replace("Z", "+00:00")
+    return datetime.fromisoformat(s)
+
+
 def _build_event(conn, event_id: str) -> dict | None:
     row = conn.execute("SELECT * FROM calendar_events WHERE id = ?", (event_id,)).fetchone()
     if row is None:
@@ -46,16 +62,20 @@ def create_event(
             "SELECT 1 FROM legal_cases WHERE id = ?", (body.case_id,)
         ).fetchone():
             raise HTTPException(
-                status_code=422,
+                status_code=400,
                 detail={"code": "INVALID_REFERENCE", "message": f"Case '{body.case_id}' not found"},
             )
         if body.client_id and not conn.execute(
             "SELECT 1 FROM clients WHERE id = ?", (body.client_id,)
         ).fetchone():
             raise HTTPException(
-                status_code=422,
+                status_code=400,
                 detail={"code": "INVALID_REFERENCE", "message": f"Client '{body.client_id}' not found"},
             )
+        if body.case_id:
+            ensure_assistant_case(conn, body.case_id, current_user)
+        if body.client_id:
+            ensure_assistant_owns_client(conn, body.client_id, current_user)
         eid = str(uuid.uuid4())
         conn.execute(
             "INSERT INTO calendar_events"
@@ -73,15 +93,19 @@ def create_event(
 
 @router.get("", response_model=list[CalendarEventOut], summary="List calendar events")
 def list_events(
-    event_type: Optional[str] = None,
+    event_type: Optional[EventType] = Query(None),
     case_id: Optional[str] = None,
     current_user: dict = Depends(require_role("calendar_events", "read")),
 ):
     query = "SELECT id FROM calendar_events WHERE 1=1"
     params: list = []
+    if current_user["role"] == "assistant":
+        scope, plist = assistant_calendar_scope(current_user["id"])
+        query += f" AND ({scope})"
+        params.extend(plist)
     if event_type:
         query += " AND event_type = ?"
-        params.append(event_type)
+        params.append(event_type.value)
     if case_id:
         query += " AND case_id = ?"
         params.append(case_id)
@@ -97,8 +121,9 @@ def get_event(
 ):
     with get_db() as conn:
         event = _build_event(conn, event_id)
-    if not event:
-        raise HTTPException(status_code=404, detail={"code": "NOT_FOUND", "message": "Event not found"})
+        if not event:
+            raise HTTPException(status_code=404, detail={"code": "NOT_FOUND", "message": "Event not found"})
+        ensure_assistant_readable_calendar(conn, event_id, current_user)
     return event
 
 
@@ -109,13 +134,52 @@ def update_event(
     current_user: dict = Depends(require_role("calendar_events", "update")),
 ):
     with get_db() as conn:
-        if not conn.execute("SELECT 1 FROM calendar_events WHERE id = ?", (event_id,)).fetchone():
+        row_evt = conn.execute("SELECT * FROM calendar_events WHERE id = ?", (event_id,)).fetchone()
+        if not row_evt:
             raise HTTPException(status_code=404, detail={"code": "NOT_FOUND", "message": "Event not found"})
-        data = body.model_dump(mode="json", exclude_none=True)
-        participants = data.pop("participants", None)
-        if data:
-            sets = ", ".join(f"{k} = ?" for k in data)
-            conn.execute(f"UPDATE calendar_events SET {sets} WHERE id = ?", (*data.values(), event_id))
+        ensure_assistant_readable_calendar(conn, event_id, current_user)
+        ensure_assistant_calendar_mutation(conn, row_to_dict(row_evt), current_user)
+        patch = body.model_dump(mode="json", exclude_unset=True)
+        participants = patch.pop("participants", None)
+
+        if "case_id" in patch:
+            cid = patch["case_id"]
+            if cid is not None and not conn.execute(
+                "SELECT 1 FROM legal_cases WHERE id = ?", (cid,)
+            ).fetchone():
+                raise HTTPException(
+                    status_code=400,
+                    detail={"code": "INVALID_REFERENCE", "message": f"Case '{cid}' not found"},
+                )
+        if "client_id" in patch:
+            clid = patch["client_id"]
+            if clid is not None and not conn.execute(
+                "SELECT 1 FROM clients WHERE id = ?", (clid,)
+            ).fetchone():
+                raise HTTPException(
+                    status_code=400,
+                    detail={"code": "INVALID_REFERENCE", "message": f"Client '{clid}' not found"},
+                )
+
+        if "case_id" in patch and patch["case_id"] is not None:
+            ensure_assistant_case(conn, patch["case_id"], current_user)
+        if "client_id" in patch and patch["client_id"] is not None:
+            ensure_assistant_owns_client(conn, patch["client_id"], current_user)
+
+        row = conn.execute("SELECT * FROM calendar_events WHERE id = ?", (event_id,)).fetchone()
+        old = row_to_dict(row)
+        eff_start = patch.get("start_at", old["start_at"])
+        eff_end = patch.get("end_at", old["end_at"])
+        if _parse_iso_dt(eff_end) <= _parse_iso_dt(eff_start):
+            raise HTTPException(
+                status_code=400,
+                detail={"code": "INVALID_INTERVAL", "message": "end_at must be after start_at"},
+            )
+
+        cols = {k: v for k, v in patch.items() if v is not None}
+        if cols:
+            sets = ", ".join(f"{k} = ?" for k in cols)
+            conn.execute(f"UPDATE calendar_events SET {sets} WHERE id = ?", (*cols.values(), event_id))
         if participants is not None:
             _set_participants(conn, event_id, participants)
         event = _build_event(conn, event_id)
@@ -128,6 +192,9 @@ def delete_event(
     current_user: dict = Depends(require_role("calendar_events", "delete")),
 ):
     with get_db() as conn:
-        if not conn.execute("SELECT 1 FROM calendar_events WHERE id = ?", (event_id,)).fetchone():
+        row_evt = conn.execute("SELECT * FROM calendar_events WHERE id = ?", (event_id,)).fetchone()
+        if not row_evt:
             raise HTTPException(status_code=404, detail={"code": "NOT_FOUND", "message": "Event not found"})
+        ensure_assistant_readable_calendar(conn, event_id, current_user)
+        ensure_assistant_calendar_mutation(conn, row_to_dict(row_evt), current_user)
         conn.execute("DELETE FROM calendar_events WHERE id = ?", (event_id,))

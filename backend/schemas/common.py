@@ -19,7 +19,7 @@ class _EmailType(str):
             info = validate_email(str(v), check_deliverability=False)
             return info.normalized
         except EmailNotValidError as exc:
-            raise ValueError(str(exc)) from exc
+            raise ValueError("Некорректный email: укажите адрес вида name@company.ru.") from exc
 
 
 # Use this instead of EmailStr everywhere in schemas

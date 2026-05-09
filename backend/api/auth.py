@@ -1,15 +1,56 @@
+import uuid
+
 from fastapi import APIRouter, HTTPException, Depends
 
-from schemas.auth import LoginRequest, TokenResponse
+from schemas.auth import LoginRequest, RegisterRequest, TokenResponse
+from schemas.users import UserRole
 from core.security import (
     verify_password,
+    hash_password,
     create_access_token,
     get_current_user,
     ACCESS_TOKEN_EXPIRE_MINUTES,
 )
-from storage.database import get_db, row_to_dict
+from storage.database import get_db, row_to_dict, _now
 
 router = APIRouter()
+
+
+@router.post(
+    "/register",
+    response_model=TokenResponse,
+    status_code=201,
+    summary="Register a new user (role: assistant)",
+)
+def register(body: RegisterRequest):
+    """Self-registration; role is always `assistant`. Admins promote via `/users`."""
+    with get_db() as conn:
+        if conn.execute("SELECT 1 FROM users WHERE email = ?", (str(body.email),)).fetchone():
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "EMAIL_TAKEN", "message": "Email already registered"},
+            )
+        uid = str(uuid.uuid4())
+        conn.execute(
+            "INSERT INTO users (id,full_name,email,password_hash,role,is_active,created_at)"
+            " VALUES (?,?,?,?,?,?,?)",
+            (
+                uid,
+                body.full_name.strip(),
+                str(body.email),
+                hash_password(body.password),
+                UserRole.assistant.value,
+                1,
+                _now(),
+            ),
+        )
+        row = conn.execute("SELECT * FROM users WHERE id = ?", (uid,)).fetchone()
+    user = row_to_dict(row)
+    token = create_access_token({"sub": user["id"], "role": user["role"]})
+    return TokenResponse(
+        access_token=token,
+        expires_in=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+    )
 
 
 @router.post("/login", response_model=TokenResponse, summary="Login with email and password")
