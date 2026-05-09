@@ -1,6 +1,6 @@
 # CRM для адвоката (локальная папка проекта)
 
-- **Фронтенд:** каталог `frontend-src/` — основной git-репозиторий [friendly-disco](https://github.com/kunduziskender-boop/friendly-disco) (ветка `main`); туда же входит папка **`backend/`** для публикации полного стека.
-- **Бэкенд для разработки:** дублируется в корне как `backend/` (удобно запускать без захода во `frontend-src`).
+- **Фронтенд:** каталог **`фронтенд/`** — React + Vite; репозиторий [friendly-disco](https://github.com/kunduziskender-boop/friendly-disco) (ветка `main`) содержит также **`backend/`** для полного стека.
+- **Бэкенд:** каталог `backend/` (FastAPI, SQLite).
 
-Файл `.env` в корневом `backend/` не попадает в git; шаблон — `backend/.env.example`.
+Файл `.env` в `backend/` не попадает в git; шаблон — `backend/.env.example`. Переменные фронта — `фронтенд/.env` (шаблон `фронтенд/.env.example`).

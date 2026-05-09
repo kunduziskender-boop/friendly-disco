@@ -1,21 +1,14 @@
-# Backend (root copy)
+# Backend
 backend/.env
 backend/venv/
 backend/**/__pycache__/
 backend/**/*.pyc
 backend/*.db
 
-# Root frontend (Vite)
-node_modules/
-dist/
-.vite/
-*.tsbuildinfo
-.env
-.env.local
-
-# Frontend clone
-frontend-src/node_modules/
-frontend-src/dist/
-frontend-src/.vite/
-frontend-src/*.tsbuildinfo
-frontend-src/backend/
+# Фронтенд (Vite, React) — каталог `фронтенд/`
+фронтенд/node_modules/
+фронтенд/dist/
+фронтенд/.vite/
+фронтенд/*.tsbuildinfo
+фронтенд/.env
+фронтенд/.env.local
