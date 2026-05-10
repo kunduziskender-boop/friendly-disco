@@ -7,14 +7,18 @@ import os
 
 load_dotenv()
 
-from api import auth, users, clients, cases, tasks, calendar, documents, finance
+from api import auth, users, clients, cases, tasks, calendar, documents, finance, leads
+from core.logging_setup import setup_logging
 from core.middleware import JWTAuthMiddleware
+from core.request_logger import RequestLoggingMiddleware
 from core.error_responses import (
     http_exception_handler,
     request_validation_exception_handler,
 )
 from storage.database import init_db, migrate_db
 from storage.seed import seed_db
+
+setup_logging()
 
 app = FastAPI(
     title=os.getenv("APP_TITLE", "Lawyer CRM API"),
@@ -30,6 +34,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.add_middleware(JWTAuthMiddleware)
+# Logging middleware добавляем последним — Starlette применяет middleware в
+# порядке LIFO, поэтому добавленный последним становится самым внешним и
+# фиксирует финальный статус ответа (включая 401 от JWTAuthMiddleware).
+app.add_middleware(RequestLoggingMiddleware)
 
 
 init_db()
@@ -68,6 +76,8 @@ app.include_router(tasks.router, prefix="/api/tasks", tags=["Tasks"])
 app.include_router(calendar.router, prefix="/api/calendar-events", tags=["Calendar"])
 app.include_router(documents.router, prefix="/api/documents", tags=["Documents"])
 app.include_router(finance.router, prefix="/api/finance-records", tags=["Finance"])
+app.include_router(leads.public_router, prefix="/api/public/leads", tags=["Public Leads"])
+app.include_router(leads.router, prefix="/api/leads", tags=["Leads"])
 
 
 @app.get("/", tags=["Health"])

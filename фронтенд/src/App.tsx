@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState, type ChangeEvent, type CSSProperties, type ReactNode } from "react";
 import {
   auth,
   login,
@@ -7,10 +7,13 @@ import {
   casesApi,
   eventsApi,
   financeApi,
+  leadsApi,
   fetchMe,
   roleHintRu,
   roleTitleRu,
   AUTH_EXPIRED_EVENT,
+  type Lead,
+  type LeadStatus,
   type MeUser,
 } from "./api";
 import type {
@@ -23,9 +26,17 @@ import type {
   LegalCase,
 } from "./types";
 
-type Tab = "обзор" | "клиенты" | "дела" | "встречи" | "финансы";
+type Tab = "обзор" | "клиенты" | "дела" | "встречи" | "финансы" | "заявки";
 
 const caseStatuses: CaseStatus[] = ["новое", "в работе", "суд", "закрыто"];
+
+const LEAD_STATUS_LABEL: Record<LeadStatus, string> = {
+  new: "новая",
+  contacted: "связались",
+  converted: "клиент",
+  rejected: "отклонено",
+};
+const leadStatusOrder: LeadStatus[] = ["new", "contacted", "converted", "rejected"];
 
 const FINANCE_TYPE_LABEL: Record<FinanceType, string> = {
   payment: "Платёж",
@@ -297,16 +308,19 @@ function MainApp({ onLogout }: { onLogout: () => void }) {
   const [cases, setCases] = useState<LegalCase[]>([]);
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [financeRecords, setFinanceRecords] = useState<FinanceRecord[]>([]);
+  const [leads, setLeads] = useState<Lead[]>([]);
 
   const [loadingClients, setLoadingClients] = useState(false);
   const [loadingCases, setLoadingCases] = useState(false);
   const [loadingEvents, setLoadingEvents] = useState(false);
   const [loadingFinance, setLoadingFinance] = useState(false);
+  const [loadingLeads, setLoadingLeads] = useState(false);
 
   const [errorClients, setErrorClients] = useState<string | null>(null);
   const [errorCases, setErrorCases] = useState<string | null>(null);
   const [errorEvents, setErrorEvents] = useState<string | null>(null);
   const [errorFinance, setErrorFinance] = useState<string | null>(null);
+  const [errorLeads, setErrorLeads] = useState<string | null>(null);
 
   const loadClients = useCallback(async () => {
     setLoadingClients(true); setErrorClients(null);
@@ -328,9 +342,14 @@ function MainApp({ onLogout }: { onLogout: () => void }) {
     try { setFinanceRecords(await financeApi.list()); } catch (e) { setErrorFinance(errMsg(e)); } finally { setLoadingFinance(false); }
   }, []);
 
+  const loadLeads = useCallback(async () => {
+    setLoadingLeads(true); setErrorLeads(null);
+    try { setLeads(await leadsApi.list()); } catch (e) { setErrorLeads(errMsg(e)); } finally { setLoadingLeads(false); }
+  }, []);
+
   useEffect(() => {
-    loadClients(); loadCases(); loadEvents(); loadFinance();
-  }, [loadClients, loadCases, loadEvents, loadFinance]);
+    loadClients(); loadCases(); loadEvents(); loadFinance(); loadLeads();
+  }, [loadClients, loadCases, loadEvents, loadFinance, loadLeads]);
 
   useEffect(() => {
     let cancelled = false;
@@ -353,7 +372,8 @@ function MainApp({ onLogout }: { onLogout: () => void }) {
     clients: clients.length,
     open: cases.filter((c) => c.status !== "закрыто").length,
     soon: appointments.filter((a) => !Number.isNaN(new Date(a.at).getTime()) && new Date(a.at).getTime() >= Date.now()).length,
-  }), [clients, cases, appointments]);
+    newLeads: leads.filter((l) => l.status === "new").length,
+  }), [clients, cases, appointments, leads]);
 
   return (
     <div style={layout.app}>
@@ -396,10 +416,21 @@ function MainApp({ onLogout }: { onLogout: () => void }) {
           <p style={{ margin: "0.35rem 0 0", color: "var(--muted)", fontSize: "0.82rem" }}>Данные сохраняются в базе данных.</p>
         </div>
         <nav style={layout.nav}>
-          {(["обзор", "клиенты", "дела", "встречи", "финансы"] as const).map((t) => (
+          {(["обзор", "заявки", "клиенты", "дела", "встречи", "финансы"] as const).map((t) => (
             <button key={t} type="button" onClick={() => setTab(t)}
               style={{ ...layout.navBtn, ...(tab === t ? layout.navBtnActive : {}) }}>
               {t}
+              {t === "заявки" && stats.newLeads > 0 && (
+                <span style={{
+                  marginLeft: 6,
+                  background: tab === t ? "rgba(255,255,255,0.3)" : "var(--accent)",
+                  color: "#fff",
+                  borderRadius: 999,
+                  padding: "0 0.4rem",
+                  fontSize: "0.72rem",
+                  fontWeight: 600,
+                }}>{stats.newLeads}</span>
+              )}
             </button>
           ))}
           <button type="button" onClick={onLogout} style={layout.navBtnLogout}>Выйти</button>
@@ -429,6 +460,17 @@ function MainApp({ onLogout }: { onLogout: () => void }) {
             loading={loadingFinance} error={errorFinance} onRefresh={loadFinance}
             onAdd={async (f) => { await financeApi.create(f); await loadFinance(); }} />
         )}
+        {tab === "заявки" && (
+          <LeadsTab
+            leads={leads}
+            loading={loadingLeads}
+            error={errorLeads}
+            onRefresh={loadLeads}
+            onUpdateStatus={async (id, status) => { await leadsApi.updateStatus(id, status); await loadLeads(); }}
+            canDeleteLeads={me?.role === "admin" || me?.role === "lawyer"}
+            onRemove={async (id) => { await leadsApi.remove(id); await loadLeads(); }}
+          />
+        )}
       </main>
     </div>
   );
@@ -437,7 +479,7 @@ function MainApp({ onLogout }: { onLogout: () => void }) {
 // ── Overview ──────────────────────────────────────────────────────────────────
 
 function Overview({ stats, appointments, clients }: {
-  stats: { clients: number; open: number; soon: number };
+  stats: { clients: number; open: number; soon: number; newLeads: number };
   appointments: Appointment[];
   clients: Client[];
 }) {
@@ -452,6 +494,7 @@ function Overview({ stats, appointments, clients }: {
         <Stat title="Клиентов" value={stats.clients} />
         <Stat title="Дел не закрыто" value={stats.open} />
         <Stat title="Предстоящих встреч" value={stats.soon} />
+        <Stat title="Новых заявок" value={stats.newLeads} />
       </div>
       <section style={card.section}>
         <h2 style={card.h2}>Ближайшие встречи</h2>
@@ -1208,6 +1251,209 @@ function FinanceTab({ records, clients, cases, loading, error, onRefresh, onAdd 
   );
 }
 
+// ── Leads tab ─────────────────────────────────────────────────────────────────
+
+function LeadsTab({ leads, loading, error, onRefresh, onUpdateStatus, canDeleteLeads, onRemove }: {
+  leads: Lead[];
+  loading: boolean;
+  error: string | null;
+  onRefresh: () => void;
+  onUpdateStatus: (id: string, status: LeadStatus) => Promise<void>;
+  canDeleteLeads: boolean;
+  onRemove: (id: string) => Promise<void>;
+}) {
+  const [filter, setFilter] = useState<"" | LeadStatus>("");
+  const filtered = filter ? leads.filter((l) => l.status === filter) : leads;
+  const sorted = [...filtered].sort((a, b) => b.created_at.localeCompare(a.created_at));
+
+  const filterBtn = (label: string, value: "" | LeadStatus, count: number) => (
+    <button
+      key={value || "all"}
+      type="button"
+      onClick={() => setFilter(value)}
+      style={{
+        ...layout.navBtn,
+        ...(filter === value ? layout.navBtnActive : {}),
+        padding: "0.3rem 0.65rem",
+        fontSize: "0.85rem",
+      }}
+    >
+      {label} ({count})
+    </button>
+  );
+
+  return (
+    <div style={{ display: "grid", gap: "1.25rem" }}>
+      <section style={card.section}>
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "baseline",
+            flexWrap: "wrap",
+            gap: "0.75rem",
+          }}
+        >
+          <h2 style={{ ...card.h2, margin: 0 }}>Заявки с сайта</h2>
+          <div style={{ display: "flex", gap: "0.4rem", flexWrap: "wrap" }}>
+            {filterBtn("все", "", leads.length)}
+            {leadStatusOrder.map((s) =>
+              filterBtn(LEAD_STATUS_LABEL[s], s, leads.filter((l) => l.status === s).length)
+            )}
+            <button
+              type="button"
+              onClick={onRefresh}
+              style={{ ...layout.navBtn, padding: "0.3rem 0.65rem", fontSize: "0.85rem" }}
+            >
+              обновить
+            </button>
+          </div>
+        </div>
+        <p style={{ margin: "0.5rem 0 0", color: "var(--muted)", fontSize: "0.85rem" }}>
+          Источник заявок: <code>POST /api/public/leads</code>. Демо-форма доступна по{" "}
+          <a href="/lead.html" target="_blank" rel="noreferrer">/lead.html</a>.
+        </p>
+      </section>
+
+      <section style={card.section}>
+        {loading && <Spinner />}
+        {error && <ErrorBanner message={error} onRetry={onRefresh} />}
+        {!loading && !error && sorted.length === 0 && (
+          <p style={{ color: "var(--muted)", margin: 0 }}>
+            {filter ? "Нет заявок в этом статусе." : "Заявок пока нет."}
+          </p>
+        )}
+        {!loading && sorted.length > 0 && (
+          <div style={{ display: "grid", gap: "0.75rem" }}>
+            {sorted.map((l) => (
+              <LeadRow
+                key={l.id}
+                lead={l}
+                onUpdateStatus={onUpdateStatus}
+                canDelete={canDeleteLeads}
+                onRemove={onRemove}
+              />
+            ))}
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}
+
+function LeadRow({ lead, onUpdateStatus, canDelete, onRemove }: {
+  lead: Lead;
+  onUpdateStatus: (id: string, status: LeadStatus) => Promise<void>;
+  canDelete: boolean;
+  onRemove: (id: string) => Promise<void>;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const sheetsOk = !!lead.sheets_appended_at;
+  const telegramOk = !!lead.telegram_sent_at;
+
+  const handleStatus = async (e: ChangeEvent<HTMLSelectElement>) => {
+    const next = e.target.value as LeadStatus;
+    setBusy(true);
+    try {
+      await onUpdateStatus(lead.id, next);
+    } catch (err) {
+      alert(errMsg(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleRemove = async () => {
+    if (!confirm("Удалить эту заявку из CRM? Действие нельзя отменить.")) return;
+    setDeleting(true);
+    try {
+      await onRemove(lead.id);
+    } catch (err) {
+      alert(errMsg(err));
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  return (
+    <div style={{ ...card.listItem, alignItems: "flex-start" }}>
+      <div style={{ flex: "1 1 auto", minWidth: 0 }}>
+        <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "wrap" }}>
+          <span style={leadPill[lead.status]}>{LEAD_STATUS_LABEL[lead.status]}</span>
+          <strong>{lead.name}</strong>
+          <span style={{ color: "var(--muted)", fontSize: "0.88rem" }}>
+            {[lead.phone, lead.email].filter(Boolean).join(" · ")}
+          </span>
+        </div>
+        {lead.message && <p style={{ margin: "0.4rem 0 0", fontSize: "0.92rem" }}>{lead.message}</p>}
+        <div
+          style={{
+            display: "flex",
+            gap: "0.6rem",
+            marginTop: "0.5rem",
+            flexWrap: "wrap",
+            fontSize: "0.78rem",
+            alignItems: "center",
+          }}
+        >
+          <span style={{ color: "var(--muted)" }}>{formatLocal(lead.created_at)}</span>
+          {lead.source && <span style={{ color: "var(--muted)" }}>источник: {lead.source}</span>}
+          <span style={integrationBadge(sheetsOk)}>Sheets {sheetsOk ? "✓" : "—"}</span>
+          <span style={integrationBadge(telegramOk)}>Telegram {telegramOk ? "✓" : "—"}</span>
+          {lead.last_integration_error && (
+            <span style={{ color: "var(--danger)" }}>ошибка: {lead.last_integration_error}</span>
+          )}
+        </div>
+      </div>
+      <div
+        style={{
+          display: "flex",
+          gap: "0.5rem",
+          alignItems: "center",
+          flexShrink: 0,
+          flexWrap: "wrap",
+        }}
+      >
+        <select
+          style={{ ...form.input, maxWidth: 140, opacity: busy ? 0.6 : 1 }}
+          value={lead.status}
+          disabled={busy}
+          onChange={handleStatus}
+        >
+          {leadStatusOrder.map((s) => (
+            <option key={s} value={s}>
+              {LEAD_STATUS_LABEL[s]}
+            </option>
+          ))}
+        </select>
+        {canDelete && (
+          <button
+            type="button"
+            onClick={() => void handleRemove()}
+            disabled={deleting || busy}
+            style={{
+              ...btn.danger,
+              opacity: deleting ? 0.6 : 1,
+              borderColor: "#b91c1c",
+              color: "#991b1b",
+            }}
+            title="Удалить заявку"
+          >
+            {deleting ? "…" : "удалить"}
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function integrationBadge(ok: boolean): CSSProperties {
+  return ok
+    ? { background: "#ecfdf5", color: "#065f46", padding: "0.1rem 0.45rem", borderRadius: 6 }
+    : { background: "#f5f5f4", color: "#57534e", padding: "0.1rem 0.45rem", borderRadius: 6 };
+}
+
 // ── Helpers ─────────────────────────────────────────────────────────────────--
 
 /** YYYY-MM-DD → DD.MM.YYYY */
@@ -1296,4 +1542,11 @@ const financeStatusPill: Record<FinanceStatus, CSSProperties> = {
   pending:   { background: "#fffbeb", color: "#92400e", padding: "0.1rem 0.45rem", borderRadius: 6, fontSize: "0.8rem" },
   paid:      { background: "#ecfdf5", color: "#065f46", padding: "0.1rem 0.45rem", borderRadius: 6, fontSize: "0.8rem" },
   cancelled: { background: "#f5f5f4", color: "#57534e", padding: "0.1rem 0.45rem", borderRadius: 6, fontSize: "0.8rem" },
+};
+
+const leadPill: Record<LeadStatus, CSSProperties> = {
+  new:       { background: "#fef3c7", color: "#92400e", padding: "0.1rem 0.45rem", borderRadius: 6, fontSize: "0.8rem" },
+  contacted: { background: "#eff6ff", color: "#1e40af", padding: "0.1rem 0.45rem", borderRadius: 6, fontSize: "0.8rem" },
+  converted: { background: "#ecfdf5", color: "#065f46", padding: "0.1rem 0.45rem", borderRadius: 6, fontSize: "0.8rem" },
+  rejected:  { background: "#f5f5f4", color: "#57534e", padding: "0.1rem 0.45rem", borderRadius: 6, fontSize: "0.8rem" },
 };

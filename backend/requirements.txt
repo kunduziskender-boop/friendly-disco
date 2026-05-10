@@ -4,3 +4,9 @@ python-jose[cryptography]
 bcrypt
 python-dotenv
 pydantic[email]
+
+# Google Sheets integration (опционально — нужно при использовании
+# `GOOGLE_APPLICATION_CREDENTIALS`; без них модуль просто пишет
+# `sheets disabled: missing dependency` и не блокирует приём лидов).
+google-auth
+google-api-python-client

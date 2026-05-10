@@ -165,6 +165,22 @@ def init_db() -> None:
                 created_at     TEXT NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS leads (
+                id                     TEXT PRIMARY KEY,
+                name                   TEXT NOT NULL,
+                phone                  TEXT NOT NULL,
+                email                  TEXT,
+                message                TEXT,
+                source                 TEXT,
+                consent_personal_data  INTEGER NOT NULL DEFAULT 0,
+                status                 TEXT NOT NULL DEFAULT 'new'
+                    CHECK (status IN ('new','contacted','converted','rejected')),
+                sheets_appended_at     TEXT,
+                telegram_sent_at       TEXT,
+                last_integration_error TEXT,
+                created_at             TEXT NOT NULL
+            );
+
             """
         )
 
@@ -205,9 +221,32 @@ def migrate_db() -> None:
         ("idx_documents_client",    "documents(client_id)"),
         ("idx_finance_client",      "finance_records(client_id)"),
         ("idx_finance_case",        "finance_records(case_id)"),
+        ("idx_leads_status",        "leads(status)"),
+        ("idx_leads_created_at",    "leads(created_at)"),
     ]
 
     with get_db() as conn:
+        # 0. Создание новых таблиц для существующих БД (для leads и подобных).
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS leads (
+                id                     TEXT PRIMARY KEY,
+                name                   TEXT NOT NULL,
+                phone                  TEXT NOT NULL,
+                email                  TEXT,
+                message                TEXT,
+                source                 TEXT,
+                consent_personal_data  INTEGER NOT NULL DEFAULT 0,
+                status                 TEXT NOT NULL DEFAULT 'new'
+                    CHECK (status IN ('new','contacted','converted','rejected')),
+                sheets_appended_at     TEXT,
+                telegram_sent_at       TEXT,
+                last_integration_error TEXT,
+                created_at             TEXT NOT NULL
+            )
+            """
+        )
+
         # 1. Add new columns (silently skip if already exist)
         for table, col, defn in _new_columns:
             try:

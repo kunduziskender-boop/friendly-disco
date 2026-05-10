@@ -1,5 +1,5 @@
 /**
- * API client for Lawyer CRM backend (http://localhost:8000)
+ * API client for Lawyer CRM backend
  *
  * Responsibilities:
  *  - token management (JWT in localStorage)
@@ -23,7 +23,7 @@ import type {
  *
  * - `VITE_API_ROOT` — приоритет: полный префикс (`http://127.0.0.1:8000/api` или для старого бэкенда `http://127.0.0.1:8000`).
  * - иначе `VITE_API_BASE` + `/api`, кроме `VITE_API_LEGACY=true` (старый бэкенд без `/api`).
- * - в `npm run dev`: по умолчанию `/api` (прокси в vite.config.ts → 127.0.0.1:8000).
+ * - в `npm run dev`: по умолчанию `/api` (прокси в vite.config.ts → 127.0.0.1:8010).
  */
 function computeApiRoot(): string {
   const root = import.meta.env.VITE_API_ROOT?.trim();
@@ -95,9 +95,10 @@ async function req<T>(
   path: string,
   body?: unknown
 ): Promise<T> {
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-  };
+  const headers: Record<string, string> = {};
+  if (body !== undefined && method !== "GET" && method !== "HEAD") {
+    headers["Content-Type"] = "application/json";
+  }
   const hadToken = !!_token;
   if (_token) headers.Authorization = `Bearer ${_token}`;
 
@@ -133,7 +134,25 @@ async function req<T>(
     }
     let msg = formatHttpError(res.status, data);
     if (res.status === 404) {
-      msg += ` (${method} ${url}). Частая причина: запущена старая версия API без префикса /api или без эндпоинта регистрации — остановите uvicorn на :8000 и запустите из папки backend актуальный проект (с POST /api/auth/register).`;
+      msg += ` (${method} ${url}).`;
+      const isLeadRemoval =
+        path.startsWith("/leads/") &&
+        (method === "DELETE" || path.endsWith("/delete"));
+      if (isLeadRemoval) {
+        msg +=
+          " На этом URL нет удаления лида — обычно крутится старая копия API или другой порт." +
+          " Поднимите актуальный `backend`: `python -m uvicorn main:app --reload --host 127.0.0.1 --port 8010` (или свой порт) и чтобы фронт бился в тот же адрес (`vite.config.ts` proxy или `VITE_API_ROOT=http://127.0.0.1:8010/api`)." +
+          " В Swagger (`/docs`) должны быть `DELETE /api/leads/{lead_id}` и `POST /api/leads/{lead_id}/delete`.";
+      } else if (method === "DELETE") {
+        msg +=
+          " Убедитесь, что на сервере последняя версия API и один экземпляр бэкенда с одной базой crm.db.";
+      } else {
+        msg +=
+          " Частая причина: запрос уходит не в тот процесс (старый uvicorn без префикса /api на :8000) — остановите лишнее и запустите из каталога backend см. README; порт по умолчанию 8010.";
+      }
+    } else if (res.status === 405 || res.status === 501) {
+      msg +=
+        ` Метод ${method} не поддерживается — обновите бэкенд и перезапустите его из каталога backend (эндпоинты удаления лида под /api/leads).`;
     }
     throw new ApiError(res.status, msg);
   }
@@ -477,5 +496,56 @@ export const financeApi = {
         description: f.description || null,
       })
     );
+  },
+};
+
+// ── Leads API ─────────────────────────────────────────────────────────────────
+
+export type LeadStatus = "new" | "contacted" | "converted" | "rejected";
+
+export interface Lead {
+  id: string;
+  name: string;
+  phone: string;
+  email: string | null;
+  message: string | null;
+  source: string | null;
+  consent_personal_data: boolean;
+  status: LeadStatus;
+  sheets_appended_at: string | null;
+  telegram_sent_at: string | null;
+  last_integration_error: string | null;
+  created_at: string;
+}
+
+export interface LeadRetryResult {
+  id: string;
+  integrations: { sheets: string; telegram: string };
+}
+
+export const leadsApi = {
+  async list(status?: LeadStatus): Promise<Lead[]> {
+    const path = status ? `/leads?status=${encodeURIComponent(status)}` : "/leads";
+    return req<Lead[]>("GET", path);
+  },
+
+  async updateStatus(id: string, status: LeadStatus): Promise<Lead> {
+    return req<Lead>("PATCH", `/leads/${id}`, { status });
+  },
+
+  async retry(id: string): Promise<LeadRetryResult> {
+    return req<LeadRetryResult>("POST", `/leads/${id}/integrations/retry`);
+  },
+
+  async remove(id: string): Promise<void> {
+    try {
+      await req<void>("DELETE", `/leads/${id}`);
+    } catch (e) {
+      if (e instanceof ApiError && (e.status === 405 || e.status === 501)) {
+        await req<void>("POST", `/leads/${id}/delete`);
+        return;
+      }
+      throw e;
+    }
   },
 };

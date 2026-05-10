@@ -47,6 +47,15 @@ RBAC: dict[str, dict[str, list[str]]] = {
         "update": ["admin", "lawyer"],
         "delete": ["admin"],
     },
+    "leads": {
+        # Заявки с сайта создаются публичным эндпоинтом без auth — `create` здесь
+        # описывает только защищённый ручной ввод, если когда-то появится.
+        "create": ["admin", "lawyer"],
+        "read":   ["admin", "lawyer", "assistant"],
+        "update": ["admin", "lawyer"],
+        # Удаление заявок: только администратор и юрист.
+        "delete": ["admin", "lawyer"],
+    },
 }
 
 

@@ -23,6 +23,9 @@ def _is_exempt(path: str) -> bool:
         return True
     if not path.startswith("/api"):
         return True
+    # Публичные эндпоинты (приём заявок с сайта и т.п.) — без JWT.
+    if path.startswith("/api/public/"):
+        return True
     return path in _API_AUTH_FREE
 
 
