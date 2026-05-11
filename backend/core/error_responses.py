@@ -1,4 +1,8 @@
-"""Unified JSON errors: { \"code\", \"message\" } at document root."""
+"""Унифицированные JSON-ошибки.
+
+Обычно корень: ``code``, ``message``. Для ``RequestValidationError`` дополнительно
+``errors``: список ``{ "field", "message" }``.
+"""
 
 from __future__ import annotations
 
@@ -30,15 +34,33 @@ async def http_exception_handler(request: Request, exc: HTTPException) -> JSONRe
     return JSONResponse(status_code=exc.status_code, content=body, headers=headers)
 
 
+def _validation_field_from_loc(loc: tuple[Any, ...] | list[Any]) -> str:
+    parts = [str(x) for x in loc if x != "body"]
+    return ".".join(parts) if parts else "request"
+
+
 async def request_validation_exception_handler(
     request: Request, exc: RequestValidationError
 ) -> JSONResponse:
+    _ = request
     errs = exc.errors()
-    parts = []
-    for e in errs[:8]:
-        loc = ".".join(str(x) for x in e.get("loc", ()) if x != "body")
-        msg = e.get("msg", "")
-        ctx = loc or "request"
-        parts.append(f"{ctx}: {msg}".strip(": "))
+    errors_out: list[dict[str, str]] = []
+    parts: list[str] = []
+    for e in errs[:20]:
+        loc = tuple(e.get("loc", ()))
+        field = _validation_field_from_loc(loc)
+        raw_msg = e.get("msg", "")
+        msg = str(raw_msg).strip() if raw_msg is not None else ""
+        if not msg:
+            msg = "Invalid value"
+        errors_out.append({"field": field, "message": msg})
+        parts.append(f"{field}: {msg}".strip(": "))
     message = "; ".join(parts) if parts else "Invalid request payload"
-    return JSONResponse(status_code=400, content={"code": "VALIDATION_ERROR", "message": message})
+    return JSONResponse(
+        status_code=400,
+        content={
+            "code": "VALIDATION_ERROR",
+            "message": message,
+            "errors": errors_out,
+        },
+    )

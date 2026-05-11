@@ -2,6 +2,7 @@ from fastapi import FastAPI, Request, HTTPException
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from slowapi.errors import RateLimitExceeded
 from dotenv import load_dotenv
 import os
 
@@ -17,6 +18,22 @@ from core.error_responses import (
 )
 from storage.database import init_db, migrate_db
 from storage.seed import ensure_test_user, seed_db
+from core.rate_limit import limiter
+
+
+def _cors_allow_origins() -> list[str]:
+    """Origins для CORS с credentials: '*' недопустим (браузер + Starlette)."""
+    default = (
+        "http://127.0.0.1:5173,http://localhost:5173,"
+        "http://127.0.0.1:4173,http://localhost:4173,"
+        "http://127.0.0.1:8010,http://localhost:8010"
+    )
+    raw = os.getenv("CORS_ORIGINS", default)
+    origins = [o.strip() for o in raw.split(",") if o.strip() and o.strip() != "*"]
+    if not origins:
+        origins = [o.strip() for o in default.split(",") if o.strip()]
+    return origins
+
 
 setup_logging()
 
@@ -25,10 +42,11 @@ app = FastAPI(
     version=os.getenv("APP_VERSION", "1.0.0"),
     description="CRM-система для адвоката — backend API",
 )
+app.state.limiter = limiter
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_cors_allow_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -54,6 +72,17 @@ async def unified_http_exception_handler(request: Request, exc: HTTPException):
 @app.exception_handler(RequestValidationError)
 async def validation_error_handler(request: Request, exc: RequestValidationError):
     return await request_validation_exception_handler(request, exc)
+
+
+@app.exception_handler(RateLimitExceeded)
+async def rate_limit_handler(_request: Request, _exc: RateLimitExceeded) -> JSONResponse:
+    return JSONResponse(
+        status_code=429,
+        content={
+            "code": "RATE_LIMITED",
+            "message": "Слишком много запросов с этого адреса. Повторите позже.",
+        },
+    )
 
 
 @app.exception_handler(Exception)

@@ -4,17 +4,29 @@ Called once at startup from main.py.
 If the users table is already populated the function returns immediately,
 so it is safe to call on every restart.
 
-E2E / automation login (also ensured on every startup via ``ensure_test_user``):
-``test@example.com`` / ``password123`` (role: lawyer).
+Demo user passwords must be set via environment (see ``.env.example``), not in code.
+
+E2E user ``test@example.com`` (role: lawyer): set ``E2E_TEST_USER_PASSWORD``;
+``ensure_test_user`` skips if it is unset (e.g. production).
 """
 import json
+import os
 import uuid
 
 from core.security import hash_password
 from storage.database import _now, get_db
 
 TEST_USER_EMAIL = "test@example.com"
-TEST_USER_PASSWORD = "password123"
+
+
+def _require_seed_demo_password(env_name: str) -> str:
+    value = os.getenv(env_name, "").strip()
+    if not value:
+        raise RuntimeError(
+            f"{env_name} must be set to seed an empty database "
+            "(see backend/.env.example)."
+        )
+    return value
 
 
 def _uid() -> str:
@@ -32,14 +44,19 @@ def seed_db() -> None:
         asst_id   = _uid()
         test_id   = _uid()
 
+        admin_pw = _require_seed_demo_password("SEED_DEMO_ADMIN_PASSWORD")
+        lawyer_pw = _require_seed_demo_password("SEED_DEMO_LAWYER_PASSWORD")
+        asst_pw = _require_seed_demo_password("SEED_DEMO_ASSISTANT_PASSWORD")
+        e2e_pw = _require_seed_demo_password("E2E_TEST_USER_PASSWORD")
+
         conn.executemany(
             "INSERT INTO users (id,full_name,email,password_hash,role,is_active,created_at)"
             " VALUES (?,?,?,?,?,?,?)",
             [
-                (admin_id,  "Admin User",    "admin@example.com",     hash_password("Admin1234"),  "admin",     1, _now()),
-                (lawyer_id, "Иванов Иван",   "lawyer@example.com",    hash_password("Lawyer1234"), "lawyer",    1, _now()),
-                (asst_id,   "Петрова Анна",  "assistant@example.com", hash_password("Assist1234"), "assistant", 1, _now()),
-                (test_id,   "Test User",     TEST_USER_EMAIL,         hash_password(TEST_USER_PASSWORD), "lawyer", 1, _now()),
+                (admin_id,  "Admin User",    "admin@example.com",     hash_password(admin_pw),  "admin",     1, _now()),
+                (lawyer_id, "Иванов Иван",   "lawyer@example.com",    hash_password(lawyer_pw), "lawyer",    1, _now()),
+                (asst_id,   "Петрова Анна",  "assistant@example.com", hash_password(asst_pw), "assistant", 1, _now()),
+                (test_id,   "Test User",     TEST_USER_EMAIL,         hash_password(e2e_pw), "lawyer", 1, _now()),
             ],
         )
 
@@ -141,7 +158,10 @@ def seed_db() -> None:
 
 
 def ensure_test_user() -> None:
-    """Insert fixed test credentials if that email is absent (existing DBs)."""
+    """Insert E2E test user if ``E2E_TEST_USER_PASSWORD`` is set and email is absent."""
+    pw = os.getenv("E2E_TEST_USER_PASSWORD", "").strip()
+    if not pw:
+        return
     with get_db() as conn:
         if conn.execute(
             "SELECT 1 FROM users WHERE email = ?", (TEST_USER_EMAIL,)
@@ -154,7 +174,7 @@ def ensure_test_user() -> None:
                 _uid(),
                 "Test User",
                 TEST_USER_EMAIL,
-                hash_password(TEST_USER_PASSWORD),
+                hash_password(pw),
                 "lawyer",
                 1,
                 _now(),

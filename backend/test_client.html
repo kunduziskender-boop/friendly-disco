@@ -660,7 +660,7 @@ function clearToken() {
 }
 
 function clearResult() {
-  document.getElementById('resultBody').innerHTML = '';
+  document.getElementById('resultBody').textContent = '';
   document.getElementById('resultStatus').textContent = '';
   document.getElementById('resultLabel').textContent = 'Результат запроса';
 }
@@ -675,18 +675,6 @@ document.querySelectorAll('.nav-item').forEach(el => {
   });
 });
 
-// ── JSON syntax highlight ────────────────────────────────────────
-function highlight(json) {
-  return json
-    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
-    .replace(/("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(\.\d+)?([eE][+-]?\d+)?)/g, m => {
-      if (/^"/.test(m)) return /:$/.test(m) ? `<span class="j-key">${m}</span>` : `<span class="j-str">${m}</span>`;
-      if (/true|false/.test(m)) return `<span class="j-bool">${m}</span>`;
-      if (/null/.test(m)) return `<span class="j-null">${m}</span>`;
-      return `<span class="j-num">${m}</span>`;
-    });
-}
-
 function showResult(label, status, data) {
   document.getElementById('resultLabel').textContent = label;
   const statusEl = document.getElementById('resultStatus');
@@ -695,7 +683,7 @@ function showResult(label, status, data) {
   let pretty;
   try { pretty = JSON.stringify(typeof data === 'string' ? JSON.parse(data) : data, null, 2); }
   catch { pretty = String(data); }
-  document.getElementById('resultBody').innerHTML = highlight(pretty);
+  document.getElementById('resultBody').textContent = pretty;
 }
 
 // ── core request ─────────────────────────────────────────────────

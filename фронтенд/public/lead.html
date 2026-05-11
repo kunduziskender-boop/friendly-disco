@@ -125,9 +125,9 @@
     const btn = document.getElementById("submit");
     const out = document.getElementById("result");
 
-    function show(kind, html) {
+    function show(kind, text) {
       out.className = "result " + kind;
-      out.innerHTML = html;
+      out.textContent = text;
     }
 
     form.addEventListener("submit", async (e) => {
@@ -159,11 +159,12 @@
         });
         const data = await res.json().catch(() => ({}));
         if (res.ok) {
-          show("ok",
-            "Заявка принята. <br/><br/>" +
-            "<b>id:</b> " + (data.id || "?") + "<br/>" +
-            "<b>Sheets:</b> " + (data.integrations?.sheets || "?") + "<br/>" +
-            "<b>Telegram:</b> " + (data.integrations?.telegram || "?")
+          show(
+            "ok",
+            "Заявка принята.\n\n" +
+              "id: " + (data.id || "?") + "\n" +
+              "Sheets: " + (data.integrations?.sheets || "?") + "\n" +
+              "Telegram: " + (data.integrations?.telegram || "?")
           );
           form.reset();
         } else {

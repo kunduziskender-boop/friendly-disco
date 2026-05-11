@@ -1,9 +1,10 @@
 import uuid
 
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Request
 
 from schemas.auth import LoginRequest, RegisterRequest, TokenResponse
 from schemas.users import UserRole
+from core.rate_limit import limiter, AUTH_LOGIN_RATE_LIMIT, AUTH_REGISTER_RATE_LIMIT
 from core.security import (
     verify_password,
     hash_password,
@@ -22,7 +23,8 @@ router = APIRouter()
     status_code=201,
     summary="Register a new user (role: assistant)",
 )
-def register(body: RegisterRequest):
+@limiter.limit(AUTH_REGISTER_RATE_LIMIT)
+def register(request: Request, body: RegisterRequest):
     """Self-registration; role is always `assistant`. Admins promote via `/users`."""
     with get_db() as conn:
         if conn.execute("SELECT 1 FROM users WHERE email = ?", (str(body.email),)).fetchone():
@@ -54,7 +56,8 @@ def register(body: RegisterRequest):
 
 
 @router.post("/login", response_model=TokenResponse, summary="Login with email and password")
-def login(body: LoginRequest):
+@limiter.limit(AUTH_LOGIN_RATE_LIMIT)
+def login(request: Request, body: LoginRequest):
     with get_db() as conn:
         row = conn.execute("SELECT * FROM users WHERE email = ?", (body.email,)).fetchone()
     user = row_to_dict(row)

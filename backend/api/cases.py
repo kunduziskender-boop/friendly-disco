@@ -5,7 +5,7 @@ from fastapi import APIRouter, HTTPException, Depends, Query
 
 from schemas.cases import CaseCreate, CaseUpdate, CaseOut, CaseStatus
 from core.rbac import require_role
-from core.row_access import ensure_assistant_case
+from core.row_access import ensure_assistant_case, ensure_assistant_owns_client
 from storage.database import get_db, row_to_dict, _now
 
 router = APIRouter()
@@ -22,6 +22,7 @@ def create_case(
                 status_code=400,
                 detail={"code": "INVALID_REFERENCE", "message": f"Client '{body.client_id}' not found"},
             )
+        ensure_assistant_owns_client(conn, body.client_id, current_user)
         if conn.execute("SELECT 1 FROM legal_cases WHERE case_number = ?", (body.case_number,)).fetchone():
             raise HTTPException(
                 status_code=409,

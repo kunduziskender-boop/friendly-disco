@@ -7,7 +7,18 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
 
-SECRET_KEY = os.getenv("SECRET_KEY", "changeme")
+
+def _load_secret_key() -> str:
+    key = os.getenv("SECRET_KEY", "").strip()
+    if key:
+        return key
+    raise RuntimeError(
+        "SECRET_KEY is not set. Copy backend/.env.example to backend/.env "
+        "and set a long random SECRET_KEY (JWT signing)."
+    )
+
+
+SECRET_KEY = _load_secret_key()
 ALGORITHM = os.getenv("ALGORITHM", "HS256")
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "60"))
 
