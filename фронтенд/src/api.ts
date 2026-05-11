@@ -261,6 +261,7 @@ interface BEvent {
   end_at: string;
   event_type: string;
   case_id: string | null;
+  client_id?: string | null;
   participants: string[];
   created_by: string;
 }
@@ -334,10 +335,11 @@ interface EventMeta {
 
 function toAppointment(b: BEvent): Appointment {
   const m = parseMeta<EventMeta>(b.description);
+  const fromApi = b.client_id ?? "";
   return {
     id: b.id,
     title: b.title,
-    clientId: m.clientId ?? b.participants[0] ?? "",
+    clientId: fromApi || m.clientId || b.participants[0] || "",
     at: b.start_at,
     place: m.place ?? "",
   };
@@ -440,7 +442,8 @@ export const eventsApi = {
         end_at: end.toISOString(),
         description,
         event_type: "meeting",
-        participants: a.clientId ? [a.clientId] : [],
+        client_id: a.clientId || null,
+        participants: [],
       })
     );
   },

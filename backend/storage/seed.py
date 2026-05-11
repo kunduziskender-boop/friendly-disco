@@ -3,12 +3,18 @@
 Called once at startup from main.py.
 If the users table is already populated the function returns immediately,
 so it is safe to call on every restart.
+
+E2E / automation login (also ensured on every startup via ``ensure_test_user``):
+``test@example.com`` / ``password123`` (role: lawyer).
 """
 import json
 import uuid
 
 from core.security import hash_password
 from storage.database import _now, get_db
+
+TEST_USER_EMAIL = "test@example.com"
+TEST_USER_PASSWORD = "password123"
 
 
 def _uid() -> str:
@@ -24,6 +30,7 @@ def seed_db() -> None:
         admin_id  = _uid()
         lawyer_id = _uid()
         asst_id   = _uid()
+        test_id   = _uid()
 
         conn.executemany(
             "INSERT INTO users (id,full_name,email,password_hash,role,is_active,created_at)"
@@ -32,6 +39,7 @@ def seed_db() -> None:
                 (admin_id,  "Admin User",    "admin@example.com",     hash_password("Admin1234"),  "admin",     1, _now()),
                 (lawyer_id, "Иванов Иван",   "lawyer@example.com",    hash_password("Lawyer1234"), "lawyer",    1, _now()),
                 (asst_id,   "Петрова Анна",  "assistant@example.com", hash_password("Assist1234"), "assistant", 1, _now()),
+                (test_id,   "Test User",     TEST_USER_EMAIL,         hash_password(TEST_USER_PASSWORD), "lawyer", 1, _now()),
             ],
         )
 
@@ -129,4 +137,26 @@ def seed_db() -> None:
                 (_uid(), "expense",  3500.0,  "RUB", "2026-05-03", "paid",    None,   case1_id, "Государственная пошлина",     lawyer_id, _now()),
                 (_uid(), "payment", 120000.0, "RUB", "2026-05-05", "pending", cl2_id, case2_id, "Аванс по корпоративному делу", lawyer_id, _now()),
             ],
+        )
+
+
+def ensure_test_user() -> None:
+    """Insert fixed test credentials if that email is absent (existing DBs)."""
+    with get_db() as conn:
+        if conn.execute(
+            "SELECT 1 FROM users WHERE email = ?", (TEST_USER_EMAIL,)
+        ).fetchone():
+            return
+        conn.execute(
+            "INSERT INTO users (id,full_name,email,password_hash,role,is_active,created_at)"
+            " VALUES (?,?,?,?,?,?,?)",
+            (
+                _uid(),
+                "Test User",
+                TEST_USER_EMAIL,
+                hash_password(TEST_USER_PASSWORD),
+                "lawyer",
+                1,
+                _now(),
+            ),
         )

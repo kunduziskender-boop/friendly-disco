@@ -16,7 +16,7 @@ from core.error_responses import (
     request_validation_exception_handler,
 )
 from storage.database import init_db, migrate_db
-from storage.seed import seed_db
+from storage.seed import ensure_test_user, seed_db
 
 setup_logging()
 
@@ -43,6 +43,7 @@ app.add_middleware(RequestLoggingMiddleware)
 init_db()
 migrate_db()
 seed_db()
+ensure_test_user()
 
 
 @app.exception_handler(HTTPException)
