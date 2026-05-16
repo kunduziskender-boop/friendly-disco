@@ -26,12 +26,26 @@ import type {
  * - в `npm run dev`: по умолчанию `/api` (прокси в vite.config.ts → 127.0.0.1:8010).
  */
 function computeApiRoot(): string {
-  const root = import.meta.env.VITE_API_ROOT?.trim();
-  if (root) return root.replace(/\/+$/, "");
+  const rootRaw = import.meta.env.VITE_API_ROOT?.trim();
+  if (rootRaw) {
+    let root = rootRaw.replace(/\/+$/, "");
+    // Без https:// браузер считает URL относительным к pages.dev → 404 вроде ".../lawyer-crm-api/auth/login"
+    if (root.startsWith("//")) {
+      root = `https:${root}`;
+    } else if (!/^https?:\/\//i.test(root)) {
+      root = `https://${root}`;
+    }
+    return root;
+  }
 
-  const base = import.meta.env.VITE_API_BASE?.trim();
-  if (base) {
-    const b = base.replace(/\/+$/, "");
+  const baseRaw = import.meta.env.VITE_API_BASE?.trim();
+  if (baseRaw) {
+    let b = baseRaw.replace(/\/+$/, "");
+    if (b.startsWith("//")) {
+      b = `https:${b}`;
+    } else if (!/^https?:\/\//i.test(b)) {
+      b = `https://${b}`;
+    }
     return import.meta.env.VITE_API_LEGACY === "true" ? b : `${b}/api`;
   }
 
