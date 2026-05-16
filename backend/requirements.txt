@@ -5,6 +5,7 @@ python-jose[cryptography]
 bcrypt
 python-dotenv
 pydantic[email]
+sentry-sdk[fastapi]>=2.0.0
 
 # Google Sheets integration (опционально — нужно при использовании
 # `GOOGLE_APPLICATION_CREDENTIALS`; без них модуль просто пишет

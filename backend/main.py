@@ -8,6 +8,38 @@ import os
 
 load_dotenv()
 
+
+def _maybe_init_sentry() -> None:
+    """Sentry включается только при заданном SENTRY_DSN (секрет в .env / Render)."""
+    dsn = os.getenv("SENTRY_DSN", "").strip()
+    if not dsn:
+        return
+    import sentry_sdk
+    from sentry_sdk.integrations.fastapi import FastApiIntegration
+
+    raw_traces = os.getenv("SENTRY_TRACES_SAMPLE_RATE", "").strip()
+    try:
+        traces_sample_rate = float(raw_traces) if raw_traces else 0.0
+    except ValueError:
+        traces_sample_rate = 0.0
+
+    env = os.getenv("SENTRY_ENVIRONMENT", "").strip()
+    if not env:
+        debug = os.getenv("DEBUG", "").strip().lower() in ("true", "1", "yes")
+        env = "development" if debug else "production"
+
+    sentry_sdk.init(
+        dsn=dsn,
+        integrations=[FastApiIntegration()],
+        traces_sample_rate=max(0.0, min(1.0, traces_sample_rate)),
+        environment=env,
+        release=os.getenv("SENTRY_RELEASE", "").strip() or None,
+        send_default_pii=False,
+    )
+
+
+_maybe_init_sentry()
+
 from api import auth, users, clients, cases, tasks, calendar, documents, finance, leads
 from core.logging_setup import setup_logging
 from core.middleware import JWTAuthMiddleware
@@ -87,6 +119,12 @@ async def rate_limit_handler(_request: Request, _exc: RateLimitExceeded) -> JSON
 
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
+    try:
+        import sentry_sdk
+
+        sentry_sdk.capture_exception(exc)
+    except Exception:
+        pass
     return JSONResponse(
         status_code=500,
         content={

@@ -5,6 +5,8 @@ interface ImportMetaEnv {
   readonly VITE_API_ROOT?: string;
   /** Корень сервера без суффикса `/api`; к нему добавляется `/api`, если не `VITE_API_LEGACY` */
   readonly VITE_API_BASE?: string;
-  /** `true` — бэкенд без префикса `/api` (только старый API; регистрации на нём нет) */
-  readonly VITE_API_LEGACY?: string;
+  /** Совместимо с sentry.io: DSN фронта; без него браузерный Sentry выключен. */
+  readonly VITE_SENTRY_DSN?: string;
+  /** От 0 до 1; доля производительность-трейсов (по умолчанию 0). */
+  readonly VITE_SENTRY_TRACES_SAMPLE_RATE?: string;
 }
