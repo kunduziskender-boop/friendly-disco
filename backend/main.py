@@ -4,6 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from slowapi.errors import RateLimitExceeded
 from dotenv import load_dotenv
+import logging
 import os
 
 load_dotenv()
@@ -41,16 +42,19 @@ def _maybe_init_sentry() -> None:
 _maybe_init_sentry()
 
 from api import auth, users, clients, cases, tasks, calendar, documents, finance, leads
-from core.logging_setup import setup_logging
+from core.logging_setup import setup_logging, get_logger, emit_json_event
 from core.middleware import JWTAuthMiddleware
 from core.request_logger import RequestLoggingMiddleware
 from core.error_responses import (
     http_exception_handler,
     request_validation_exception_handler,
+    normalize_http_detail,
 )
 from storage.database import init_db, migrate_db
 from storage.seed import ensure_test_user, seed_db
 from core.rate_limit import limiter
+
+_err_log = get_logger("crm.errors")
 
 
 def _cors_allow_origins() -> list[str]:
@@ -98,16 +102,62 @@ ensure_test_user()
 
 @app.exception_handler(HTTPException)
 async def unified_http_exception_handler(request: Request, exc: HTTPException):
+    body = normalize_http_detail(exc.detail)
+    msg = (body.get("message") or "").strip()
+    if len(msg) > 1200:
+        msg = msg[:1200] + "…"
+    lvl = logging.ERROR if exc.status_code >= 500 else logging.WARNING
+    emit_json_event(
+        _err_log,
+        lvl,
+        event="http_exception",
+        path=request.url.path,
+        method=request.method,
+        status_code=exc.status_code,
+        code=body.get("code"),
+        message=msg,
+    )
     return await http_exception_handler(request, exc)
 
 
 @app.exception_handler(RequestValidationError)
 async def validation_error_handler(request: Request, exc: RequestValidationError):
+    errs = exc.errors()
+    errs_summary: list[dict[str, str]] = []
+    for e in errs[:40]:
+        loc = tuple(e.get("loc", ()))
+        parts = [str(x) for x in loc if x != "body"]
+        field = ".".join(parts) if parts else "body"
+        raw_msg = e.get("msg", "")
+        sm = str(raw_msg).strip() if raw_msg is not None else ""
+        errs_summary.append(
+            {
+                "field": field,
+                "issue_type": str(e.get("type", "")),
+                "message": sm[:240],
+            }
+        )
+    emit_json_event(
+        _err_log,
+        logging.WARNING,
+        event="request_validation_failed",
+        path=request.url.path,
+        method=request.method,
+        validation_error_count=len(errs),
+        issues=errs_summary,
+    )
     return await request_validation_exception_handler(request, exc)
 
 
 @app.exception_handler(RateLimitExceeded)
-async def rate_limit_handler(_request: Request, _exc: RateLimitExceeded) -> JSONResponse:
+async def rate_limit_handler(request: Request, _exc: RateLimitExceeded) -> JSONResponse:
+    emit_json_event(
+        _err_log,
+        logging.WARNING,
+        event="rate_limit_exceeded",
+        path=request.url.path,
+        method=request.method,
+    )
     return JSONResponse(
         status_code=429,
         content={
@@ -125,6 +175,20 @@ async def global_exception_handler(request: Request, exc: Exception):
         sentry_sdk.capture_exception(exc)
     except Exception:
         pass
+    _err_log.log(
+        logging.ERROR,
+        "-",
+        extra={
+            "crm_payload": {
+                "event": "unhandled_exception",
+                "path": request.url.path,
+                "method": request.method,
+                "exception_type": type(exc).__name__,
+                "exception_message": str(exc),
+            }
+        },
+        exc_info=(type(exc), exc, exc.__traceback__),
+    )
     return JSONResponse(
         status_code=500,
         content={

@@ -18,12 +18,12 @@
 """
 from __future__ import annotations
 
-import uuid
+import logging
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
-from core.logging_setup import get_logger
+from core.logging_setup import emit_json_event, get_logger, sanitize_secret_fields
 from core.rbac import require_role
 from integrations.google_sheets import (
     append_lead_row,
@@ -46,6 +46,7 @@ router = APIRouter()
 public_router = APIRouter()
 
 _logger = get_logger("crm.leads")
+_business = get_logger("crm.business")
 
 # Второй тег — чтобы в /docs блок «Заявки — удалить» был отдельно (DELETE живёт в
 # одной строке с GET/PATCH у пути /api/leads/{lead_id}; его нужно развернуть).
@@ -77,9 +78,12 @@ def create_lead_public(body: LeadCreate, request: Request):
     # 1. Honeypot — если бот заполнил скрытое поле, тихо отбрасываем как
     # обычную ошибку валидации, чтобы не подсказывать спамеру причину.
     if body.hp_field:
-        _logger.warning(
-            "lead honeypot triggered ip=%s path=%s",
-            _client_ip(request), request.url.path,
+        emit_json_event(
+            _business,
+            logging.WARNING,
+            event="lead_honeypot_triggered",
+            client=_client_ip(request),
+            path=str(request.url.path),
         )
         raise HTTPException(
             status_code=400,
@@ -113,10 +117,20 @@ def create_lead_public(body: LeadCreate, request: Request):
             row = conn.execute(
                 "SELECT * FROM leads WHERE id = ?", (lead_id,)
             ).fetchone()
-    except Exception as exc:
-        _logger.error(
-            "lead insert failed ip=%s error=%s",
-            _client_ip(request), type(exc).__name__,
+    except Exception:
+        _logger.log(
+            logging.ERROR,
+            "-",
+            extra={
+                "crm_payload": sanitize_secret_fields(
+                    {
+                        "event": "lead_insert_failed",
+                        "client": _client_ip(request),
+                        "path": str(request.url.path),
+                    }
+                )
+            },
+            exc_info=True,
         )
         raise HTTPException(
             status_code=500,
@@ -124,9 +138,13 @@ def create_lead_public(body: LeadCreate, request: Request):
         )
 
     lead = _row_to_lead(row) or {}
-    _logger.info(
-        "lead created id=%s source=%s ip=%s",
-        lead_id, (body.source or "-"), _client_ip(request),
+    emit_json_event(
+        _business,
+        logging.INFO,
+        event="lead_created_public",
+        lead_id=lead_id,
+        source=body.source,
+        client=_client_ip(request),
     )
 
     # 3. Внешние интеграции — отдельной функцией, ошибки внутри не пробрасываются.
@@ -196,6 +214,14 @@ def update_lead(
         row = conn.execute(
             "SELECT * FROM leads WHERE id = ?", (lead_id,)
         ).fetchone()
+    emit_json_event(
+        _business,
+        logging.INFO,
+        event="lead_updated",
+        lead_id=lead_id,
+        fields_updated=sorted(data.keys()),
+        actor_user_id=current_user.get("id"),
+    )
     return _row_to_lead(row)
 
 
@@ -210,7 +236,13 @@ def _delete_lead_impl(lead_id: str, current_user: dict) -> None:
                 detail={"code": "NOT_FOUND", "message": "Lead not found"},
             )
         conn.execute("DELETE FROM leads WHERE id = ?", (lead_id,))
-    _logger.info("lead deleted id=%s by=%s", lead_id, current_user.get("id"))
+    emit_json_event(
+        _business,
+        logging.INFO,
+        event="lead_deleted",
+        lead_id=lead_id,
+        actor_user_id=current_user.get("id"),
+    )
 
 
 @router.delete(
@@ -289,9 +321,15 @@ def retry_lead_integrations(
     _persist_integration_state(
         lead_id, sheets_status, telegram_status, error_parts
     )
-    _logger.info(
-        "lead retry id=%s sheets=%s telegram=%s",
-        lead_id, sheets_status, telegram_status,
+    emit_json_event(
+        _business,
+        logging.INFO,
+        event="lead_integrations_retry",
+        lead_id=lead_id,
+        sheets=sheets_status,
+        telegram=telegram_status,
+        errors=error_parts or None,
+        actor_user_id=current_user.get("id"),
     )
     return {
         "id": lead_id,
@@ -351,8 +389,17 @@ def _persist_integration_state(
                 " WHERE id = ?",
                 (sheets_at, telegram_at, last_error, lead_id),
             )
-    except Exception as exc:
-        _logger.warning(
-            "lead integration state update failed id=%s error=%s",
-            lead_id, type(exc).__name__,
+    except Exception:
+        _logger.log(
+            logging.WARNING,
+            "-",
+            extra={
+                "crm_payload": sanitize_secret_fields(
+                    {
+                        "event": "lead_integration_state_persist_failed",
+                        "lead_id": lead_id,
+                    }
+                )
+            },
+            exc_info=True,
         )

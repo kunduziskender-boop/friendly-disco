@@ -1,3 +1,4 @@
+import logging
 import uuid
 from typing import Optional
 
@@ -7,8 +8,11 @@ from schemas.clients import ClientCreate, ClientUpdate, ClientOut, ClientType
 from core.rbac import require_role
 from core.row_access import ensure_assistant_owns_client
 from storage.database import get_db, row_to_dict, _now
+from core.logging_setup import emit_json_event, get_logger
 
 router = APIRouter()
+
+_business = get_logger("crm.business")
 
 
 @router.post("", response_model=ClientOut, status_code=201, summary="Create client")
@@ -21,10 +25,25 @@ def create_client(
         conn.execute(
             "INSERT INTO clients (id,name,phone,email,client_type,notes,created_by,created_at)"
             " VALUES (?,?,?,?,?,?,?,?)",
-            (cid, body.name, body.phone, str(body.email), body.client_type.value,
-             body.notes, current_user["id"], _now()),
+            (
+                cid,
+                body.name,
+                body.phone,
+                str(body.email),
+                body.client_type.value,
+                body.notes,
+                current_user["id"],
+                _now(),
+            ),
         )
         row = conn.execute("SELECT * FROM clients WHERE id = ?", (cid,)).fetchone()
+    emit_json_event(
+        _business,
+        logging.INFO,
+        event="client_created",
+        client_id=cid,
+        actor_user_id=current_user["id"],
+    )
     return row_to_dict(row)
 
 
@@ -75,6 +94,7 @@ def update_client(
     body: ClientUpdate,
     current_user: dict = Depends(require_role("clients", "update")),
 ):
+    patch_fields = list(body.model_dump(mode="json", exclude_none=True).keys())
     with get_db() as conn:
         if not conn.execute("SELECT 1 FROM clients WHERE id = ?", (client_id,)).fetchone():
             raise HTTPException(status_code=404, detail={"code": "NOT_FOUND", "message": "Client not found"})
@@ -84,6 +104,14 @@ def update_client(
             sets = ", ".join(f"{k} = ?" for k in data)
             conn.execute(f"UPDATE clients SET {sets} WHERE id = ?", (*data.values(), client_id))
         row = conn.execute("SELECT * FROM clients WHERE id = ?", (client_id,)).fetchone()
+    emit_json_event(
+        _business,
+        logging.INFO,
+        event="client_updated",
+        client_id=client_id,
+        actor_user_id=current_user["id"],
+        fields_updated=patch_fields or [],
+    )
     return row_to_dict(row)
 
 
@@ -103,7 +131,6 @@ def _cascade_delete_client_records(conn, client_id: str) -> None:
         conn.execute(f"DELETE FROM documents WHERE case_id IN ({ph})", case_ids)
         conn.execute(f"DELETE FROM finance_records WHERE case_id IN ({ph})", case_ids)
         conn.execute(f"DELETE FROM legal_cases WHERE id IN ({ph})", case_ids)
-    # Записи только по client_id (или оставшиеся после удаления дел)
     conn.execute("DELETE FROM tasks WHERE client_id = ?", (client_id,))
     conn.execute("DELETE FROM finance_records WHERE client_id = ?", (client_id,))
     conn.execute("DELETE FROM documents WHERE client_id = ?", (client_id,))
@@ -121,3 +148,10 @@ def delete_client(
             raise HTTPException(status_code=404, detail={"code": "NOT_FOUND", "message": "Client not found"})
         ensure_assistant_owns_client(conn, client_id, current_user)
         _cascade_delete_client_records(conn, client_id)
+    emit_json_event(
+        _business,
+        logging.INFO,
+        event="client_deleted",
+        client_id=client_id,
+        actor_user_id=current_user["id"],
+    )

@@ -1,3 +1,4 @@
+import logging
 import uuid
 
 from fastapi import APIRouter, HTTPException, Depends
@@ -6,8 +7,11 @@ from schemas.users import UserCreate, UserUpdate, UserOut
 from core.rbac import require_role
 from core.security import hash_password
 from storage.database import get_db, row_to_dict, _now
+from core.logging_setup import emit_json_event, get_logger
 
 router = APIRouter()
+
+_business = get_logger("crm.business")
 
 
 @router.post("", response_model=UserOut, status_code=201, summary="Create user (admin only)")
@@ -28,6 +32,14 @@ def create_user(
             (uid, body.full_name, body.email, hash_password(body.password), body.role, 1, _now()),
         )
         row = conn.execute("SELECT * FROM users WHERE id = ?", (uid,)).fetchone()
+    emit_json_event(
+        _business,
+        logging.INFO,
+        event="admin_user_created",
+        new_user_id=uid,
+        new_user_role=str(body.role),
+        actor_admin_id=current_user["id"],
+    )
     return row_to_dict(row)
 
 
@@ -75,6 +87,8 @@ def update_user(
                 "message": "Доступ запрещён: можно изменять только свой профиль (или войдите как администратор).",
             },
         )
+    raw_keys = set(body.model_dump(mode="json", exclude_none=True).keys())
+    password_changed = "password" in raw_keys
     with get_db() as conn:
         if not conn.execute("SELECT 1 FROM users WHERE id = ?", (user_id,)).fetchone():
             raise HTTPException(status_code=404, detail={"code": "NOT_FOUND", "message": "User not found"})
@@ -85,6 +99,17 @@ def update_user(
             sets = ", ".join(f"{k} = ?" for k in data)
             conn.execute(f"UPDATE users SET {sets} WHERE id = ?", (*data.values(), user_id))
         row = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+    fields_logged = sorted(k for k in raw_keys if k != "password")
+    if password_changed:
+        fields_logged.append("password_rotated")
+    emit_json_event(
+        _business,
+        logging.INFO,
+        event="user_updated",
+        target_user_id=user_id,
+        actor_user_id=current_user["id"],
+        fields_updated=fields_logged or [],
+    )
     return row_to_dict(row)
 
 
@@ -97,3 +122,10 @@ def delete_user(
         if not conn.execute("SELECT 1 FROM users WHERE id = ?", (user_id,)).fetchone():
             raise HTTPException(status_code=404, detail={"code": "NOT_FOUND", "message": "User not found"})
         conn.execute("UPDATE users SET is_active = 0 WHERE id = ?", (user_id,))
+    emit_json_event(
+        _business,
+        logging.INFO,
+        event="user_deactivated",
+        target_user_id=user_id,
+        actor_admin_id=current_user["id"],
+    )

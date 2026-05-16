@@ -1,17 +1,16 @@
-"""Request metadata logging middleware.
+"""Request logging: JSON events for мутаций (POST/PATCH/DELETE).
 
-Пишем в лог только метаданные: метод, путь, статус, длительность. Тела
-запросов и ответов не логируем — там могут быть пароли, токены и ПДн.
-"""
+Тела запросов в лог не пишутся."""
 from __future__ import annotations
 
+import logging
 import time
 
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response
 
-from core.logging_setup import get_logger
+from core.logging_setup import emit_json_event, get_logger, sanitize_secret_fields
 
 _logger = get_logger("crm.request")
 
@@ -25,18 +24,41 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
 
         try:
             response: Response = await call_next(request)
-        except Exception:
+        except BaseException as exc:
             duration_ms = int((time.monotonic() - start) * 1000)
-            # Тип исключения логируем без сообщения — там может быть ПДн.
-            _logger.exception(
-                "request unhandled method=%s path=%s client=%s duration_ms=%d",
-                method, path, client, duration_ms,
+            _logger.log(
+                logging.ERROR,
+                "-",
+                extra={
+                    "crm_payload": sanitize_secret_fields(
+                        {
+                            "event": "http_request_failed_before_response",
+                            "method": method,
+                            "path": path,
+                            "duration_ms": duration_ms,
+                            "client": client,
+                            "exception_type": type(exc).__name__,
+                            "exception_message": str(exc),
+                        }
+                    ),
+                },
+                exc_info=(type(exc), exc, exc.__traceback__),
             )
             raise
 
         duration_ms = int((time.monotonic() - start) * 1000)
-        _logger.info(
-            "method=%s path=%s status=%d duration_ms=%d client=%s",
-            method, path, response.status_code, duration_ms, client,
-        )
+        status = response.status_code
+        if method in {"POST", "PATCH", "DELETE"}:
+            emit_json_event(
+                _logger,
+                logging.INFO,
+                event="http_mutation",
+                method=method,
+                path=path,
+                url_path=path,
+                status_code=status,
+                duration_ms=duration_ms,
+                client=client,
+            )
+
         return response

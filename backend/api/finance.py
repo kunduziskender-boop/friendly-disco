@@ -1,3 +1,4 @@
+import logging
 import uuid
 from typing import Optional
 
@@ -17,8 +18,11 @@ from core.row_access import (
     ensure_assistant_readable_finance,
 )
 from storage.database import get_db, row_to_dict, _now
+from core.logging_setup import emit_json_event, get_logger
 
 router = APIRouter()
+
+_business = get_logger("crm.business")
 
 
 @router.post("", response_model=FinanceRecordOut, status_code=201, summary="Create finance record")
@@ -46,12 +50,33 @@ def create_finance_record(
             "INSERT INTO finance_records"
             " (id,record_type,amount,currency,payment_date,status,client_id,case_id,description,created_by,created_at)"
             " VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-            (fid, body.record_type.value, body.amount, body.currency,
-             body.payment_date.isoformat(), body.status.value,
-             body.client_id, body.case_id, body.description,
-             current_user["id"], _now()),
+            (
+                fid,
+                body.record_type.value,
+                body.amount,
+                body.currency,
+                body.payment_date.isoformat(),
+                body.status.value,
+                body.client_id,
+                body.case_id,
+                body.description,
+                current_user["id"],
+                _now(),
+            ),
         )
         row = conn.execute("SELECT * FROM finance_records WHERE id = ?", (fid,)).fetchone()
+    emit_json_event(
+        _business,
+        logging.INFO,
+        event="finance_record_created",
+        record_id=fid,
+        record_type=body.record_type.value,
+        amount=float(body.amount),
+        currency=body.currency,
+        client_id=body.client_id or None,
+        case_id=body.case_id or None,
+        actor_user_id=current_user["id"],
+    )
     return row_to_dict(row)
 
 
@@ -106,6 +131,7 @@ def update_finance_record(
     body: FinanceRecordUpdate,
     current_user: dict = Depends(require_role("finance_records", "update")),
 ):
+    pf = list(body.model_dump(mode="json", exclude_none=True).keys())
     with get_db() as conn:
         row0 = conn.execute("SELECT * FROM finance_records WHERE id = ?", (record_id,)).fetchone()
         if not row0:
@@ -117,6 +143,14 @@ def update_finance_record(
             sets = ", ".join(f"{k} = ?" for k in data)
             conn.execute(f"UPDATE finance_records SET {sets} WHERE id = ?", (*data.values(), record_id))
         row = conn.execute("SELECT * FROM finance_records WHERE id = ?", (record_id,)).fetchone()
+    emit_json_event(
+        _business,
+        logging.INFO,
+        event="finance_record_updated",
+        record_id=record_id,
+        actor_user_id=current_user["id"],
+        fields_updated=pf or [],
+    )
     return row_to_dict(row)
 
 
@@ -132,3 +166,10 @@ def delete_finance_record(
         ensure_assistant_readable_finance(conn, record_id, current_user)
         ensure_assistant_finance_mutation(conn, row_to_dict(row0), current_user)
         conn.execute("DELETE FROM finance_records WHERE id = ?", (record_id,))
+    emit_json_event(
+        _business,
+        logging.INFO,
+        event="finance_record_deleted",
+        record_id=record_id,
+        actor_user_id=current_user["id"],
+    )

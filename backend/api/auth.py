@@ -1,3 +1,4 @@
+import logging
 import uuid
 
 from fastapi import APIRouter, HTTPException, Depends, Request
@@ -13,8 +14,11 @@ from core.security import (
     ACCESS_TOKEN_EXPIRE_MINUTES,
 )
 from storage.database import get_db, row_to_dict, _now
+from core.logging_setup import emit_json_event, get_logger
 
 router = APIRouter()
+
+_business = get_logger("crm.business")
 
 
 @router.post(
@@ -49,6 +53,13 @@ def register(request: Request, body: RegisterRequest):
         row = conn.execute("SELECT * FROM users WHERE id = ?", (uid,)).fetchone()
     user = row_to_dict(row)
     token = create_access_token({"sub": user["id"], "role": user["role"]})
+    emit_json_event(
+        _business,
+        logging.INFO,
+        event="user_registered",
+        user_id=uid,
+        role=user["role"],
+    )
     return TokenResponse(
         access_token=token,
         expires_in=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
@@ -72,6 +83,13 @@ def login(request: Request, body: LoginRequest):
             detail={"code": "USER_INACTIVE", "message": "Account is deactivated"},
         )
     token = create_access_token({"sub": user["id"], "role": user["role"]})
+    emit_json_event(
+        _business,
+        logging.INFO,
+        event="user_logged_in",
+        user_id=user["id"],
+        role=user["role"],
+    )
     return TokenResponse(
         access_token=token,
         expires_in=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
@@ -81,10 +99,10 @@ def login(request: Request, body: LoginRequest):
 @router.get("/me", summary="Get current authenticated user")
 def me(current_user: dict = Depends(get_current_user)):
     return {
-        "id":         current_user["id"],
-        "full_name":  current_user["full_name"],
-        "email":      current_user["email"],
-        "role":       current_user["role"],
-        "is_active":  current_user["is_active"],
+        "id": current_user["id"],
+        "full_name": current_user["full_name"],
+        "email": current_user["email"],
+        "role": current_user["role"],
+        "is_active": current_user["is_active"],
         "created_at": current_user["created_at"],
     }
