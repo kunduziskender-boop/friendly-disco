@@ -9,7 +9,6 @@ Demo user passwords must be set via environment (see ``.env.example``), not in c
 E2E user ``test@example.com`` (role: lawyer): set ``E2E_TEST_USER_PASSWORD``;
 ``ensure_test_user`` skips if it is unset (e.g. production).
 """
-import json
 import os
 import uuid
 
@@ -112,24 +111,34 @@ def seed_db() -> None:
             ],
         )
 
-        # ── Calendar events ────────────────────────────────────────────────
+        # ── Calendar events (participants via calendar_event_participants) ───
+        cal_evt1_id = _uid()
+        cal_evt2_id = _uid()
         conn.executemany(
             "INSERT INTO calendar_events"
-            " (id,title,description,start_at,end_at,event_type,case_id,participants,created_by)"
+            " (id,title,description,start_at,end_at,event_type,case_id,client_id,created_by)"
             " VALUES (?,?,?,?,?,?,?,?,?)",
             [
                 (
-                    _uid(),
+                    cal_evt1_id,
                     "Заседание суда по делу 2024-001", None,
                     "2026-05-22T10:00:00+00:00", "2026-05-22T12:00:00+00:00",
-                    "hearing", case1_id, json.dumps([lawyer_id]), lawyer_id,
+                    "hearing", case1_id, cl1_id, lawyer_id,
                 ),
                 (
-                    _uid(),
+                    cal_evt2_id,
                     'Встреча с клиентом ООО "Альфа"', None,
                     "2026-05-18T14:00:00+00:00", "2026-05-18T15:00:00+00:00",
-                    "meeting", case2_id, json.dumps([lawyer_id, asst_id]), lawyer_id,
+                    "meeting", case2_id, cl2_id, lawyer_id,
                 ),
+            ],
+        )
+        conn.executemany(
+            "INSERT OR IGNORE INTO calendar_event_participants (event_id, user_id) VALUES (?, ?)",
+            [
+                (cal_evt1_id, lawyer_id),
+                (cal_evt2_id, lawyer_id),
+                (cal_evt2_id, asst_id),
             ],
         )
 
