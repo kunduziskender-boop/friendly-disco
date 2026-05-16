@@ -21,8 +21,9 @@ import type {
 /**
  * База для всех путей вида `/clients`, `/auth/login` (без завершающего `/`).
  *
- * - `VITE_API_ROOT` — приоритет: полный префикс (`http://127.0.0.1:8000/api` или для старого бэкенда `http://127.0.0.1:8000`).
- * - иначе `VITE_API_BASE` + `/api`, кроме `VITE_API_LEGACY=true` (старый бэкенд без `/api`).
+ * - `VITE_API_ROOT` — полный префикс, обычно с `/api`: `http://127.0.0.1:8010/api` или
+ *   облако `https://…onrender.com/api`. Если указали домен без `/api`, суффикс добавится автоматически,
+ *   кроме `VITE_API_LEGACY=true` (старый бэкенд без префикса `/api`).
  * - в `npm run dev`: по умолчанию `/api` (прокси в vite.config.ts → 127.0.0.1:8010).
  */
 function computeApiRoot(): string {
@@ -34,6 +35,12 @@ function computeApiRoot(): string {
       root = `https:${root}`;
     } else if (!/^https?:\/\//i.test(root)) {
       root = `https://${root}`;
+    }
+    if (
+      import.meta.env.VITE_API_LEGACY !== "true" &&
+      !/\/api$/i.test(root)
+    ) {
+      root = `${root}/api`;
     }
     return root;
   }
