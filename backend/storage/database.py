@@ -265,10 +265,13 @@ def migrate_db() -> None:
             """
         )
 
-        # 3. Migrate JSON participants → junction table
-        rows = conn.execute(
-            "SELECT id, participants FROM calendar_events WHERE participants IS NOT NULL"
-        ).fetchall()
+        # 3. Migrate JSON participants → junction table (legacy column; fresh DBs have no participants)
+        try:
+            rows = conn.execute(
+                "SELECT id, participants FROM calendar_events WHERE participants IS NOT NULL"
+            ).fetchall()
+        except sqlite3.OperationalError:
+            rows = []
         for row in rows:
             try:
                 ids = json.loads(row["participants"] or "[]")
